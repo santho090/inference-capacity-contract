@@ -1,0 +1,11 @@
+{
+  "model_id": "example/7b",
+  "revision": "sha256:example",
+  "parameter_count": 7000000000,
+  "num_layers": 32,
+  "num_kv_heads": 8,
+  "head_dim": 128,
+  "weight_dtype": "bf16",
+  "max_model_len": 8192,
+  "attention_type": "gqa"
+}

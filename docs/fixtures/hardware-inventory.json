@@ -1,0 +1,18 @@
+{
+  "items": [
+    {
+      "hardware_id": "h100-80gb",
+      "vendor": "nvidia",
+      "device_count": 1,
+      "memory_bytes_per_device": 85899345920,
+      "memory_utilization_limit": 0.9
+    },
+    {
+      "hardware_id": "mi300x-192gb",
+      "vendor": "amd",
+      "device_count": 1,
+      "memory_bytes_per_device": 206158430208,
+      "memory_utilization_limit": 0.9
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "profile_id": "example-profile-001",
+  "model_id": "example/7b",
+  "model_revision": "sha256:example",
+  "hardware_id": "h100-80gb",
+  "runtime_engine": "vllm",
+  "runtime_version": "0.8.5",
+  "request_rate_per_second": 20.0,
+  "input_tokens_per_request": 100.0,
+  "output_tokens_per_request": 50.0,
+  "sustainable_requests_per_replica_per_second": 10.0,
+  "sustainable_prefill_tokens_per_replica_per_second": 1000.0,
+  "sustainable_decode_tokens_per_replica_per_second": 800.0,
+  "target_utilization": 0.7,
+  "scale_up_buffer": 1.15,
+  "min_replicas": 1,
+  "baseline_replicas": 8,
+  "evidence": [
+    {
+      "evidence_id": "example-run-001",
+      "kind": "measured",
+      "source": "benchmark://example-run-001",
+      "scope": "example/7b@sha256:example on h100-80gb/vllm-0.8.5",
+      "metrics": {
+        "sustainable_rps": 10.0,
+        "sustainable_prefill_tokens_per_second": 1000.0,
+        "sustainable_decode_tokens_per_second": 800.0
+      }
+    }
+  ]
+}

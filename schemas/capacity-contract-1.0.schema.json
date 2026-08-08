@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/inference-capacity-contract/capacity-contract-1.0.schema.json",
+  "title": "Inference Capacity Contract 1.0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "model",
+    "hardware",
+    "runtime",
+    "fits",
+    "validation_level",
+    "memory_bytes_per_device",
+    "kv_bytes_per_token",
+    "kv_capacity_tokens",
+    "max_context_tokens",
+    "max_concurrent_sequences",
+    "remaining_bytes_per_device"
+  ],
+  "properties": {
+    "schema_version": {"const": "capacity-contract-1.0"},
+    "model": {"type": "object"},
+    "hardware": {"type": "object"},
+    "runtime": {"type": "object"},
+    "fits": {"type": "boolean"},
+    "validation_level": {
+      "enum": ["analytically-feasible", "runtime-supported", "initialization-validated", "slo-validated"]
+    },
+    "memory_bytes_per_device": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "kv_bytes_per_token": {"type": "integer", "minimum": 1},
+    "kv_capacity_tokens": {"type": "integer", "minimum": 0},
+    "max_context_tokens": {"type": "integer", "minimum": 0},
+    "max_concurrent_sequences": {"type": "integer", "minimum": 0},
+    "remaining_bytes_per_device": {"type": "integer", "minimum": 0},
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "evidence": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": false
+}

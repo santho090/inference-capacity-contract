@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/inference-capacity-contract/scaling-recommendation-1.0.schema.json",
+  "title": "Inference Scaling Recommendation 1.0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "contract",
+    "profile",
+    "required_replicas",
+    "recommended_replicas",
+    "drivers",
+    "constrained_by",
+    "within_bounds",
+    "suggestions",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": {"const": "scaling-recommendation-1.0"},
+    "contract": {"type": "object"},
+    "profile": {"type": "object"},
+    "required_replicas": {"type": "integer", "minimum": 0},
+    "recommended_replicas": {"type": "integer", "minimum": 0},
+    "drivers": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+    "constrained_by": {"type": "string"},
+    "within_bounds": {"type": "boolean"},
+    "estimated_hourly_cost": {"type": ["number", "null"], "minimum": 0},
+    "estimated_hourly_savings_vs_baseline": {"type": ["number", "null"]},
+    "suggestions": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}
