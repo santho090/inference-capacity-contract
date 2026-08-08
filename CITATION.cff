@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+title: Inference Capacity Contract
+message: Cite this repository when using its capacity-contract format or calculators.
+type: software
+authors:
+  - family-names: Vaithiyanathan
+    given-names: Santhosh
+repository-code: https://github.com/santho090/inference-capacity-contract
+license: Apache-2.0
