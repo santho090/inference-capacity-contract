@@ -16,7 +16,7 @@ def to_llmd_planner_payload(contract: CapacityContract) -> dict[str, Any]:
     """Export a capacity fact set suitable for an llm-d planner adapter."""
 
     return {
-        "schema_version": "llmd-capacity-input-1.0",
+        "schema_version": "llmd-capacity-input-2.0",
         "producer": "inference-capacity-contract",
         "subject": {
             "model": contract.model.to_dict(),
@@ -30,10 +30,12 @@ def to_llmd_planner_payload(contract: CapacityContract) -> dict[str, Any]:
         },
         "memory": dict(contract.memory_bytes_per_device),
         "kv": {
-            "bytes_per_token": contract.kv_bytes_per_token,
-            "capacity_tokens": contract.kv_capacity_tokens,
+            "bytes_per_token_per_device": contract.kv_bytes_per_token_per_device,
+            "block_size_tokens": contract.kv_block_size_tokens,
+            "capacity_blocks_per_device": contract.kv_capacity_blocks_per_device,
+            "capacity_tokens_per_device": contract.kv_capacity_tokens_per_device,
             "max_context_tokens": contract.max_context_tokens,
-            "max_concurrent_sequences": contract.max_concurrent_sequences,
+            "concurrency_envelope": [point.to_dict() for point in contract.concurrency_envelope],
         },
         "evidence": [record.to_dict() for record in contract.evidence],
     }
@@ -48,7 +50,7 @@ def to_scaling_policy_input(contract: CapacityContract) -> dict[str, Any]:
     """
 
     return {
-        "schema_version": "scaling-policy-input-1.0",
+        "schema_version": "scaling-policy-input-2.0",
         "producer": "inference-capacity-contract",
         "selector": {
             "model_id": contract.model.model_id,
@@ -59,9 +61,9 @@ def to_scaling_policy_input(contract: CapacityContract) -> dict[str, Any]:
         },
         "per_replica_capacity": {
             "fits": contract.fits,
-            "kv_capacity_tokens": contract.kv_capacity_tokens,
+            "kv_capacity_tokens_per_device": contract.kv_capacity_tokens_per_device,
             "max_context_tokens": contract.max_context_tokens,
-            "max_concurrent_sequences": contract.max_concurrent_sequences,
+            "concurrency_envelope": [point.to_dict() for point in contract.concurrency_envelope],
         },
         "replica_count": None,
         "requires_observed_workload_profile": True,

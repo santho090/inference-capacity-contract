@@ -5,7 +5,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[1]
 
 
@@ -46,7 +45,20 @@ class CliTests(unittest.TestCase):
             )
             runtime.write_text(json.dumps({"engine": "vllm", "version": "0.8.5"}), encoding="utf-8")
 
-            command = [sys.executable, "-m", "inference_capacity_contract", "plan", "--model", str(model), "--hardware", str(hardware), "--runtime", str(runtime), "--output", str(contract)]
+            command = [
+                sys.executable,
+                "-m",
+                "inference_capacity_contract",
+                "plan",
+                "--model",
+                str(model),
+                "--hardware",
+                str(hardware),
+                "--runtime",
+                str(runtime),
+                "--output",
+                str(contract),
+            ]
             result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(json.loads(contract.read_text(encoding="utf-8"))["fits"])
@@ -87,7 +99,16 @@ class CliTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             exported = subprocess.run(
-                [sys.executable, "-m", "inference_capacity_contract", "export", "--contract", str(contract), "--target", "scaling-policy"],
+                [
+                    sys.executable,
+                    "-m",
+                    "inference_capacity_contract",
+                    "export",
+                    "--contract",
+                    str(contract),
+                    "--target",
+                    "scaling-policy",
+                ],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
@@ -96,7 +117,16 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exported.returncode, 0, exported.stderr)
             self.assertIsNone(json.loads(exported.stdout)["replica_count"])
             scaled = subprocess.run(
-                [sys.executable, "-m", "inference_capacity_contract", "scale", "--contract", str(contract), "--profile", str(profile)],
+                [
+                    sys.executable,
+                    "-m",
+                    "inference_capacity_contract",
+                    "scale",
+                    "--contract",
+                    str(contract),
+                    "--profile",
+                    str(profile),
+                ],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,

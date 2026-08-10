@@ -66,13 +66,23 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "plan":
-            result = capacity_for(ModelSpec.from_dict(_read(args.model)), HardwareSpec.from_dict(_read(args.hardware)), RuntimeVariant.from_dict(_read(args.runtime)))
+            result = capacity_for(
+                ModelSpec.from_dict(_read(args.model)),
+                HardwareSpec.from_dict(_read(args.hardware)),
+                RuntimeVariant.from_dict(_read(args.runtime)),
+            )
             _write(result.to_dict(), args.output)
         elif args.command == "fit":
             model = ModelSpec.from_dict(_read(args.model))
             inventory = HardwareInventory.from_dict(_read(args.inventory))
             runtime = RuntimeVariant.from_dict(_read(args.runtime))
-            _write({"schema_version": "capacity-contract-fit-1.0", "candidates": [item.to_dict() for item in what_fits(model, inventory, runtime)]}, args.output)
+            _write(
+                {
+                    "schema_version": "capacity-contract-fit-2.0",
+                    "candidates": [item.to_dict() for item in what_fits(model, inventory, runtime)],
+                },
+                args.output,
+            )
         elif args.command == "validate":
             contract = CapacityContract.from_dict(_read(args.contract))
             _write(contract.to_dict(), args.output)

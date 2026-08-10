@@ -1,31 +1,60 @@
 # Inference Capacity Contract
 
-`inference-capacity-contract` is a small, dependency-free Python library for answering one narrow question:
+`inference-capacity-contract` is a dependency-free Python core for calculating
+auditable LLM memory and KV-cache capacity. It answers one bounded question:
 
-> Given a model artifact, a pinned inference runtime, and a hardware topology, what can we prove about one serving replica before we run it?
+> Given an immutable model artifact, a pinned runtime configuration, and a
+> hardware topology for one serving replica, what is analytically feasible?
 
 It produces a versioned JSON contract containing:
 
 - weight, runtime-reserve, activation-reserve, and KV-cache memory accounting;
-- model-to-hardware compatibility checks, including vendor and parallelism topology;
-- KV bytes per token, token capacity, context bound, and sequence bound;
+- model, vendor, and tensor-parallel topology compatibility checks;
+- per-device KV bytes/token, block budget, and token budget;
+- a context-dependent concurrency envelope instead of one misleading scalar;
 - explicit assumptions, warnings, validation level, and evidence provenance;
-- reverse-fit results across a hardware inventory; and
-- neutral exports for an llm-d planner adapter or a workload-aware scaling adapter.
+- reverse-fit results across a hardware inventory;
+- neutral llm-d/planner and scaling-policy payloads; and
 - measured-profile replica recommendations with cost and GPU-hour deltas.
 
-The library is intentionally descriptive. It does not start vLLM or SGLang, discover GPUs, emit deployment manifests, set HPA/KEDA replicas, or claim TTFT/TPOT/throughput. Those require runtime initialization and measured workload evidence.
+The library does not start vLLM or SGLang, discover GPUs, mutate a cluster, or
+claim throughput and latency from model parameters. Runtime initialization and
+SLO performance require matching measured evidence.
 
-## Why this exists
+## Why the contract is useful
 
-Serving systems often mix four different claims: static memory fit, runtime initialization success, SLO performance at a workload, and a live autoscaling policy. This project keeps those claims separate. A deterministic analytical result is useful as a contract input, but it is not a production capacity guarantee.
+Serving systems often collapse different claims into one capacity number:
 
-## Quick start
+1. analytical memory feasibility;
+2. runtime initialization success;
+3. measured workload/SLO performance;
+4. replica policy; and
+5. cluster actuation.
 
-Requires Python 3.12+ and has no runtime dependencies.
+This project keeps those claims separate. A deterministic analytical result is
+useful for filtering and planning, but it is not a production capacity promise.
+
+## Install from a checkout
+
+Requires Python 3.12+.
+
+```bash
+python -m pip install .
+icc --help
+```
+
+The runtime package has no third-party dependencies. Development tools are
+installed separately with `python -m pip install -e '.[dev]'`.
+
+## Python example
 
 ```python
-from inference_capacity_contract import HardwareSpec, ModelSpec, RuntimeVariant, capacity_for
+from inference_capacity_contract import (
+    HardwareSpec,
+    ModelSpec,
+    RuntimeVariant,
+    capacity_for,
+)
 
 model = ModelSpec(
     model_id="example/7b",
@@ -47,60 +76,134 @@ runtime = RuntimeVariant(
     version="0.8.5",
     runtime_overhead_bytes_per_device=1 * 1024**3,
     activation_reserve_bytes_per_device=2 * 1024**3,
+    max_num_seqs=128,
 )
 
 contract = capacity_for(model, hardware, runtime)
-print(contract.to_dict())
+print(contract.max_sequences_at(2048))  # 128: runtime max_num_seqs cap
+print(contract.max_sequences_at(8192))  # 55: KV-memory bound
 ```
 
-The same calculation is available through `icc plan`, `icc fit`, `icc validate`, `icc export`, and `icc scale`. JSON fixtures are in [`docs/fixtures`](docs/fixtures).
+The two sequence values differ because concurrency is a function of active
+tokens per sequence. `capacity-contract-2.0` never reports an unsupported
+context-free `max_concurrent_sequences` value.
 
-## Calculation boundary
+## CLI example
 
-For the standard attention path, KV bytes per token are calculated as:
+```bash
+icc plan \
+  --model docs/fixtures/model-7b.json \
+  --hardware docs/fixtures/hardware-h100.json \
+  --runtime docs/fixtures/runtime-vllm.json \
+  --output contract.json
+
+icc validate --contract contract.json
+
+icc fit \
+  --model docs/fixtures/model-7b.json \
+  --inventory docs/fixtures/hardware-inventory.json \
+  --runtime docs/fixtures/runtime-vllm.json
+
+icc scale \
+  --contract contract.json \
+  --profile docs/fixtures/workload-profile.json
+```
+
+`fit` evaluates every hardware/runtime pair. An unsupported candidate is
+returned with `unsupported_reason`; it does not abort the inventory search.
+
+## Memory and KV calculation
+
+For a standard attention path, per-device KV bytes per token are:
 
 ```text
-2 × num_layers × num_kv_heads × head_dim × bytes_per_KV_element
+2 × layers × KV heads resident per device × head dimension × KV dtype bytes
 ```
 
-Usable memory is `device_memory × memory_utilization_limit`. The contract subtracts per-device weights, runtime overhead, and activation reserve, then divides the remainder by KV bytes per token. Weights can be supplied explicitly for quantized, sharded, or otherwise non-ideal artifacts.
+Usable memory is `device_memory × memory_utilization_limit`. The contract
+subtracts per-device weights, runtime overhead, and activation reserve. The
+remaining memory is divided into runtime-sized KV blocks:
 
-MLA and custom attention require an explicit `kv_bytes_per_token_override`; the library will not guess.
+```text
+KV blocks = floor(KV available bytes / bytes per KV block per device)
+blocks per sequence = ceil(active context tokens / block size)
+max sequences at context = floor(KV blocks / blocks per sequence)
+```
+
+`max_num_seqs`, when configured, further caps the sequence count.
+
+Tensor-parallel KV layout is runtime-specific. For tensor parallelism greater
+than one, the caller or future runtime adapter must provide
+`kv_heads_per_device`. The library will not silently assume that KV heads are
+sharded or replicated. MLA and custom attention similarly require an explicit
+per-device KV-bytes/token override.
 
 ## Validation levels
 
-`analytically-feasible` is the only level produced by `capacity_for` in v0. The public enum reserves a monotonic vocabulary for adapters and future validation workflows:
+`capacity_for` produces `analytically-feasible`. The public vocabulary also
+reserves:
 
-- `runtime-supported`: the pinned runtime declares support;
-- `initialization-validated`: the exact variant initialized successfully; and
-- `slo-validated`: a workload benchmark established a stated SLO envelope.
+- `runtime-supported`;
+- `initialization-validated`; and
+- `slo-validated`.
 
-Attaching an [`EvidenceRecord`](src/inference_capacity_contract/models.py) never silently promotes a contract. A producer must run and record the validation step that justifies a higher level.
+Attaching an `EvidenceRecord` never silently promotes a contract. The producer
+must perform and record the validation step that justifies a higher level.
 
 ## Evidence-backed scaling
 
-`WorkloadProfile` and `recommend_scale` provide the first useful autoscale calculation without turning static memory fit into a throughput claim. A profile binds to an exact model revision, hardware id, and runtime version; it requires measured evidence and one or more sustainable per-replica rates. The recommendation takes the maximum replica requirement across request rate, prefill tokens, decode tokens, and optional peak concurrency, then applies utilization and headroom buffers. If hardware pricing and a baseline replica count are present, it reports estimated hourly cost and GPU-hour savings.
+`WorkloadProfile` and `recommend_scale` calculate a replica recommendation only
+from measured per-replica request, prefill, decode, or concurrency capacity. A
+profile must match the exact model revision, hardware ID, runtime engine, and
+runtime version.
 
-The output is a policy input, not a cluster mutation. Missing measured evidence, scope mismatches, unknown prices, and bounds that cannot satisfy demand remain explicit warnings.
+The recommendation reports:
 
-## Non-goals for v0
+- required and buffered replicas;
+- the limiting demand driver;
+- estimated GPU-hours per hour and GPU-hour delta from a baseline;
+- hourly cost and savings when a price is provided; and
+- incomplete-evidence and configured-bound warnings.
 
-- no live GPU probing or cluster mutation;
-- no throughput, TTFT, TPOT, queueing, or cost forecast;
-- no desired replica count and no autoscaling decision;
-- no deployment YAML generator;
-- no private cloud SKU catalog, credentials, or internal measurements.
+Peak-concurrency inputs must include `concurrency_context_tokens` so the
+context-specific KV bound is used. They must also include measured
+`sustainable_concurrent_sequences_per_replica`; the lower of that measurement
+and the analytical KV bound drives the plan. The result is a policy input,
+never a cluster mutation.
 
-## Integrations
+## Schema compatibility
 
-`to_llmd_planner_payload(contract)` exports model/runtime/hardware facts and feasibility bounds for an llm-d planner adapter. `to_scaling_policy_input(contract)` exports per-replica bounds while setting `replica_count` to `null` and requiring an observed workload profile. These are deliberately small translation seams, not upstream API claims.
+Version `0.2.0` introduces the breaking `capacity-contract-2.0` schema:
 
-See [`docs/specification.md`](docs/specification.md), [`docs/adapters.md`](docs/adapters.md), and [`docs/publication-policy.md`](docs/publication-policy.md).
+- removes scalar `max_concurrent_sequences`;
+- separates per-device KV bytes, blocks, and tokens;
+- adds `concurrency_envelope`;
+- treats one runtime variant as one tensor-parallel replica; and
+- moves replica/data-parallel count to scaling and future planning layers.
+
+The historical 1.0 schema remains in `schemas/` for reference. New documents
+must use `schemas/capacity-contract-2.0.schema.json` and scaling recommendations
+use `schemas/scaling-recommendation-2.0.schema.json`.
+
+## Roadmap
+
+The next milestone is a library-first single-model solver:
+
+1. resolve pinned Hugging Face artifacts and exact tensor bytes;
+2. accept normalized user-supplied provider inventories;
+3. expose `explore` for supply-to-capacity and `plan` for demand-to-supply;
+4. import measured vLLM profiles for RPS/TPS/TTFT/TPOT planning; and
+5. later add SGLang and a separate multi-model portfolio planner.
+
+No HTTP service or autoscaler integration precedes a validated library contract.
+See `docs/roadmap.md`.
 
 ## Project status
 
-Alpha. The standalone-repository gate is intentionally empirical: adoption should be demonstrated by at least two independent consumers, one producer adapter, two consumer adapters, NVIDIA and AMD validation, and published prediction-error/failure cases before the contract is treated as stable.
+Alpha. Treat analytical fit as a filter, not a deployment guarantee. Stability
+requires real NVIDIA and AMD initialization runs, measured profile imports, and
+a published prediction-error/failure table.
 
 ## License
 
-Apache-2.0. See [`LICENSE`](LICENSE).
+Apache-2.0. See `LICENSE`.

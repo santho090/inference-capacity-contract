@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santho090.github.io/inference-capacity-contract/schemas/scaling-recommendation-2.0.schema.json",
+  "title": "Inference Scaling Recommendation 2.0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "contract",
+    "profile",
+    "required_replicas",
+    "recommended_replicas",
+    "drivers",
+    "constrained_by",
+    "within_bounds",
+    "estimated_gpu_hours_per_hour",
+    "estimated_gpu_hour_savings_vs_baseline",
+    "estimated_hourly_cost",
+    "estimated_hourly_savings_vs_baseline",
+    "suggestions",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": {"const": "scaling-recommendation-2.0"},
+    "contract": {
+      "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json"
+    },
+    "profile": {"$ref": "#/$defs/profile"},
+    "required_replicas": {"type": "integer", "minimum": 0},
+    "recommended_replicas": {"type": "integer", "minimum": 0},
+    "drivers": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "constrained_by": {"type": "string", "minLength": 1},
+    "within_bounds": {"type": "boolean"},
+    "estimated_gpu_hours_per_hour": {"type": "number", "minimum": 0},
+    "estimated_gpu_hour_savings_vs_baseline": {"type": ["number", "null"]},
+    "estimated_hourly_cost": {"type": ["number", "null"], "minimum": 0},
+    "estimated_hourly_savings_vs_baseline": {"type": ["number", "null"]},
+    "suggestions": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "profile": {
+      "type": "object",
+      "required": [
+        "profile_id",
+        "model_id",
+        "model_revision",
+        "hardware_id",
+        "runtime_engine",
+        "runtime_version",
+        "request_rate_per_second",
+        "input_tokens_per_request",
+        "output_tokens_per_request",
+        "sustainable_requests_per_replica_per_second",
+        "sustainable_prefill_tokens_per_replica_per_second",
+        "sustainable_decode_tokens_per_replica_per_second",
+        "sustainable_concurrent_sequences_per_replica",
+        "peak_concurrent_sequences",
+        "concurrency_context_tokens",
+        "target_utilization",
+        "scale_up_buffer",
+        "min_replicas",
+        "max_replicas",
+        "baseline_replicas",
+        "evidence"
+      ],
+      "properties": {
+        "profile_id": {"type": "string", "minLength": 1},
+        "model_id": {"type": "string", "minLength": 1},
+        "model_revision": {"type": "string", "minLength": 1},
+        "hardware_id": {"type": "string", "minLength": 1},
+        "runtime_engine": {"type": "string", "minLength": 1},
+        "runtime_version": {"type": "string", "minLength": 1},
+        "request_rate_per_second": {"type": "number", "minimum": 0},
+        "input_tokens_per_request": {"type": "number", "minimum": 0},
+        "output_tokens_per_request": {"type": "number", "minimum": 0},
+        "sustainable_requests_per_replica_per_second": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "sustainable_prefill_tokens_per_replica_per_second": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "sustainable_decode_tokens_per_replica_per_second": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "sustainable_concurrent_sequences_per_replica": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "peak_concurrent_sequences": {"type": ["integer", "null"], "minimum": 1},
+        "concurrency_context_tokens": {"type": ["integer", "null"], "minimum": 1},
+        "target_utilization": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "scale_up_buffer": {"type": "number", "minimum": 1},
+        "min_replicas": {"type": "integer", "minimum": 1},
+        "max_replicas": {"type": ["integer", "null"], "minimum": 1},
+        "baseline_replicas": {"type": ["integer", "null"], "minimum": 1},
+        "evidence": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

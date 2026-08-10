@@ -1,11 +1,10 @@
 [build-system]
-requires = []
-build-backend = "build_backend"
-backend-path = ["."]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
 
 [project]
 name = "inference-capacity-contract"
-version = "0.1.0"
+version = "0.2.0"
 description = "Deterministic, evidence-aware capacity contracts for LLM model and hardware fit"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -23,8 +22,10 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = [
+  "jsonschema>=4.23,<5",
   "mypy>=1.13,<2",
   "ruff>=0.8,<1",
+  "types-jsonschema>=4.23,<5",
 ]
 
 [project.scripts]
@@ -40,8 +41,11 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests", "build_backend.py"]
+files = ["src", "tests"]
 warn_unused_ignores = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/inference_capacity_contract"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

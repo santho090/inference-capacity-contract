@@ -13,7 +13,10 @@ Contributions must preserve the contract boundaries:
 Before opening a pull request:
 
 ```bash
+python -m pip install -e '.[dev]'
+python -m ruff check .
+python -m mypy
 python -m unittest discover -s tests -v
-python -m compileall -q src tests build_backend.py
-python -m pip wheel --no-deps --no-build-isolation --wheel-dir /tmp/icc-dist .
+python -m compileall -q src tests
+python -m pip wheel --no-deps --wheel-dir /tmp/icc-dist .
 ```

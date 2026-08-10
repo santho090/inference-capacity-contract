@@ -1,48 +1,65 @@
 # Roadmap and adoption gates
 
-The launch wedge is a portable capacity contract, not a universal inference control plane.
+The project is a library-first capacity solver. A service or autoscaler adapter
+is downstream of a validated standalone library.
 
-## Phase 0: public core (current)
+## Phase 0: correctness and OSS hygiene
 
-Ship the dependency-free contract, deterministic memory/KV calculation, reverse-fit query, JSON schema, fixtures, and non-actuating planner/scaling exports.
+- replace scalar concurrency with a KV/context envelope;
+- make tensor-parallel KV layout explicit;
+- return candidate-specific incompatibilities as data;
+- ship a working installed `icc` command;
+- enforce tests, Ruff, mypy, and schema validation in CI;
+- tighten the 2.0 schemas; and
+- align README and security guidance with repository behavior.
 
-Exit criteria:
+Exit gate: clean source and installed-wheel validation passes on Python 3.12
+and 3.13.
 
-- source tests and installed-wheel smoke tests pass;
-- NVIDIA and AMD fixtures exercise both supported vendors;
-- unsupported topology, unsupported vendor, unknown context, and custom-attention cases are explicit;
-- every derived value carries assumptions or warnings; and
-- no private catalog, credential, cluster client, or deployment mutation exists in the default package.
+## Phase 1: model resolution and quantized artifacts
 
-## Phase 1: measured profile import (experimental implementation included)
+- resolve Hugging Face references to immutable revisions;
+- parse config and SafeTensors metadata without downloading full weights;
+- cache normalized manifests for offline use;
+- calculate actual resident bytes for real quantized artifacts; and
+- attach field-level provenance.
 
-The current package includes a first rate-based `WorkloadProfile` and `scaling-recommendation-1.0` calculator. Extend it with a versioned workload document containing request-rate, prompt/output distributions, concurrency, queue, TTFT/TPOT/E2E percentiles, KV occupancy, readiness time, and failure boundaries. Import benchmark results as `EvidenceRecord` values without changing the analytical calculator.
+Exit gate: one public model and at least one real quantized artifact resolve
+reproducibly and replay offline.
 
-Exit criteria:
+## Phase 2: single-model analytical solver
 
-- a profile is reproducible from a pinned model revision, runtime version, hardware topology, and workload seed;
-- analytical prediction error is reported rather than hidden; and
-- initialization and SLO validation levels are granted only by explicit validation workflows.
+- accept normalized user-supplied provider inventories;
+- add a versioned vLLM runtime adapter;
+- expose `explore` and `plan` over the same candidate evaluator;
+- return ranked plans, rejected-candidate reasons, uncertainty, and resource
+  claims; and
+- property-test monotonicity and forward/reverse consistency.
 
-## Phase 2: upstream adapter
+Exit gate: one resolved model evaluates multiple providers without requiring a
+measured performance profile and clearly labels analytical/estimated results.
 
-Implement one adapter against a pinned llm-d planner contract. Keep the core schema independent from upstream release churn and test the translation in an integration fixture. Add a second consumer adapter for a workload-aware WVA/KEDA/HPA policy input; it may calculate replicas only when measured throughput/latency evidence is present.
+## Phase 3: measured SLO planning
 
-Exit criteria:
+- define operating-point performance profiles;
+- import `vllm bench serve` results;
+- match exact model/runtime/hardware/quantization variants;
+- filter by RPS/TPS/TTFT/TPOT/E2E constraints; and
+- publish prediction-error and initialization-validation tables.
 
-- one producer and two consumer adapters exist;
-- warnings and validation levels survive every translation;
-- no adapter emits deployment actions as a side effect; and
-- upstream compatibility is tested against a pinned version.
+Exit gate: a measured demand plan can be explored in reverse with consistent
+capacity and SLO results.
 
-## Phase 3: cost and fleet extensions
+## Later
 
-Add private, separately versioned adapters for GPU discovery, price catalogs, fleet availability, and organization policy. Keep these out of the public core. Cost-saving suggestions should be expressed as ranked, evidence-backed alternatives with a stated confidence interval and a rollback path.
+- SGLang runtime adapter;
+- live provider catalog importers;
+- multi-model `plan_portfolio` placement and allocation;
+- optional HTTP service; and
+- shadow/autoscaler integrations after recommendation error is known.
 
-## Standalone-repository gate
+## Stability gate
 
-Treat the schema as stable only after at least two independent consumers use it, NVIDIA and AMD paths have validation runs, and the project publishes prediction-error and failure cases. Until then, breaking schema changes are acceptable when they remove ambiguity or false precision.
-
-## Explicit non-goals
-
-Do not add live autoscaling, queue admission, deployment generation, GPU probing, or model downloading until Phase 1 establishes the workload evidence required to make those actions falsifiable.
+Do not call the schema stable until at least two independent consumers use it,
+NVIDIA and AMD paths have real validation runs, and the project publishes its
+prediction errors and failure cases.

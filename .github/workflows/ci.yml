@@ -18,15 +18,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install development tools
+        run: python -m pip install -e '.[dev]'
+      - name: Lint
+        run: python -m ruff check .
+      - name: Format check
+        run: python -m ruff format --check .
+      - name: Type check
+        run: python -m mypy
       - name: Test source tree
-        env:
-          PYTHONPATH: src
         run: python -m unittest discover -s tests -v
       - name: Build wheel
-        run: python -m pip wheel --no-deps --no-build-isolation . -w dist
+        run: python -m pip wheel --no-deps . -w dist
       - name: Test installed wheel
         run: |
           python -m venv /tmp/icc-venv
           /tmp/icc-venv/bin/python -m pip install --no-deps dist/*.whl
           /tmp/icc-venv/bin/python -c "import inference_capacity_contract; print(inference_capacity_contract.__all__)"
-          /tmp/icc-venv/bin/python -m inference_capacity_contract --help
+          /tmp/icc-venv/bin/icc --help
+          /tmp/icc-venv/bin/icc plan \
+            --model docs/fixtures/model-7b.json \
+            --hardware docs/fixtures/hardware-h100.json \
+            --runtime docs/fixtures/runtime-vllm.json \
+            --output /tmp/icc-contract.json
+          /tmp/icc-venv/bin/icc validate --contract /tmp/icc-contract.json

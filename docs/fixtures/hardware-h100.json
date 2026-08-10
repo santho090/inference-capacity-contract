@@ -1,0 +1,7 @@
+{
+  "hardware_id": "h100-80gb",
+  "vendor": "nvidia",
+  "device_count": 1,
+  "memory_bytes_per_device": 85899345920,
+  "memory_utilization_limit": 0.9
+}
