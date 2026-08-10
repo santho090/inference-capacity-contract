@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import Any
 
+from .arithmetic import ceil_div, sequence_capacity, usable_memory_bytes
 from .models import (
-    WEIGHT_BYTES,
+    DTYPE_BITS,
     CapacityContract,
     ConcurrencyPoint,
     ContractError,
+    EvidenceKind,
+    EvidenceRecord,
     HardwareInventory,
     HardwareSpec,
     ModelSpec,
@@ -24,7 +26,7 @@ def _kv_bytes_per_token_per_device(model: ModelSpec, runtime: RuntimeVariant) ->
     override = model.kv_bytes_per_token_per_device_override
     if override is not None:
         return override
-    if model.attention_type in {"mla", "hybrid", "custom"} or runtime.kv_cache_dtype == "int4":
+    if model.attention_type in {"mla", "hybrid", "custom"} or DTYPE_BITS[runtime.kv_cache_dtype] < 8:
         raise ContractError(
             "MLA, hybrid, custom, and sub-byte KV layouts require kv_bytes_per_token_per_device_override"
         )
@@ -36,8 +38,10 @@ def _kv_bytes_per_token_per_device(model: ModelSpec, runtime: RuntimeVariant) ->
         kv_heads_per_device = runtime.kv_heads_per_device
     if kv_heads_per_device > model.num_kv_heads:
         raise ContractError("kv_heads_per_device cannot exceed model num_kv_heads")
+    if runtime.tensor_parallel_size * kv_heads_per_device < model.num_kv_heads:
+        raise ContractError("kv_heads_per_device under-represents the model KV layout across tensor-parallel devices")
     kv_elements_per_token = 2 * model.num_layers * kv_heads_per_device * model.head_dim
-    return kv_elements_per_token * int(WEIGHT_BYTES[runtime.kv_cache_dtype])
+    return ceil_div(kv_elements_per_token * DTYPE_BITS[runtime.kv_cache_dtype], 8)
 
 
 def _context_points(max_context_tokens: int, block_size_tokens: int) -> tuple[int, ...]:
@@ -57,10 +61,6 @@ def _context_points(max_context_tokens: int, block_size_tokens: int) -> tuple[in
         max_context_tokens,
     }
     return tuple(sorted(point for point in candidates if 0 < point <= max_context_tokens))
-
-
-def _ceil_div(numerator: int, denominator: int) -> int:
-    return (numerator + denominator - 1) // denominator
 
 
 def capacity_for(
@@ -90,12 +90,12 @@ def capacity_for(
             f"tensor_parallel_size={runtime.tensor_parallel_size}"
         )
 
-    usable_bytes = int(Decimal(hardware.memory_bytes_per_device) * Decimal(str(hardware.memory_utilization_limit)))
+    usable_bytes = usable_memory_bytes(hardware.memory_bytes_per_device, hardware.memory_utilization_limit)
     if runtime.weight_bytes_per_device_override is not None:
         weights_per_device = runtime.weight_bytes_per_device_override
         assumptions.append("Per-device resident weight bytes use the explicit runtime override.")
     else:
-        weights_per_device = _ceil_div(model.weight_bytes, runtime.tensor_parallel_size)
+        weights_per_device = ceil_div(model.weight_bytes, runtime.tensor_parallel_size)
         assumptions.append("Weights are divided evenly across tensor-parallel devices.")
         if runtime.tensor_parallel_size > 1:
             warnings.append(
@@ -136,15 +136,22 @@ def capacity_for(
         sampled_points = tuple(sorted(set(int(point) for point in context_points)))
         if any(point <= 0 for point in sampled_points):
             raise ContractError("context points must be positive")
-        if any(point > max_context_tokens for point in sampled_points):
-            raise ContractError("context points cannot exceed max_context_tokens")
+        if fits:
+            if not sampled_points:
+                raise ContractError("context_points cannot be empty for a fitting contract")
+            if any(point > max_context_tokens for point in sampled_points):
+                raise ContractError("context points cannot exceed max_context_tokens")
+        else:
+            sampled_points = ()
 
     envelope: list[ConcurrencyPoint] = []
     for context_tokens in sampled_points:
-        blocks_per_sequence = _ceil_div(context_tokens, runtime.block_size_tokens)
-        max_sequences = kv_capacity_blocks // blocks_per_sequence
-        if runtime.max_num_seqs is not None:
-            max_sequences = min(max_sequences, runtime.max_num_seqs)
+        blocks_per_sequence, max_sequences = sequence_capacity(
+            kv_capacity_blocks,
+            runtime.block_size_tokens,
+            context_tokens,
+            runtime.max_num_seqs,
+        )
         envelope.append(
             ConcurrencyPoint(
                 context_tokens=context_tokens,
@@ -175,6 +182,20 @@ def capacity_for(
         concurrency_envelope=tuple(envelope),
         assumptions=tuple(assumptions),
         warnings=tuple(warnings),
+        evidence=(
+            EvidenceRecord(
+                evidence_id="analytical-capacity-contract-2.0",
+                kind=EvidenceKind.ANALYTICAL,
+                source="urn:inference-capacity-contract:calculator:capacity-contract-2.0",
+                scope=(
+                    f"{model.model_id}@{model.revision} on {hardware.hardware_id}/{runtime.engine}-{runtime.version}"
+                ),
+                metrics={
+                    "formula_version": "capacity-contract-2.0",
+                    "validation_level": "analytically-feasible",
+                },
+            ),
+        ),
     )
 
 

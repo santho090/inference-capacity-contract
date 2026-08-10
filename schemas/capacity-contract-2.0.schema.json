@@ -47,7 +47,11 @@
     },
     "assumptions": {"type": "array", "items": {"type": "string"}},
     "warnings": {"type": "array", "items": {"type": "string"}},
-    "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}}
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/evidence"}
+    }
   },
   "$defs": {
     "model": {

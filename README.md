@@ -107,6 +107,10 @@ icc fit \
 icc scale \
   --contract contract.json \
   --profile docs/fixtures/workload-profile.json
+
+icc export \
+  --contract contract.json \
+  --target llmd-planner
 ```
 
 `fit` evaluates every hardware/runtime pair. An unsupported candidate is
@@ -134,8 +138,10 @@ max sequences at context = floor(KV blocks / blocks per sequence)
 
 Tensor-parallel KV layout is runtime-specific. For tensor parallelism greater
 than one, the caller or future runtime adapter must provide
-`kv_heads_per_device`. The library will not silently assume that KV heads are
-sharded or replicated. MLA, hybrid cache groups, unequal K/V dimensions,
+`kv_heads_per_device`, interpreted as the maximum resident on any one device.
+Across TP devices it must cover every logical KV head; replication is allowed.
+The library will not silently assume that KV heads are sharded or replicated.
+MLA, hybrid cache groups, unequal K/V dimensions,
 sub-byte KV formats, and custom attention similarly require an explicit
 per-device KV-bytes/token override. The closed-form calculation is only for
 uniform full-attention K/V storage.
@@ -156,6 +162,8 @@ reserves:
 
 Attaching an `EvidenceRecord` never silently promotes a contract. The producer
 must perform and record the validation step that justifies a higher level.
+Every generated contract includes an analytical provenance record naming the
+formula/schema version and exact model, hardware, and runtime scope.
 
 ## Evidence-backed scaling
 
@@ -191,6 +199,10 @@ Version `0.2.0` introduces the breaking `capacity-contract-2.0` schema:
 The historical 1.0 schema remains in `schemas/` for reference. New documents
 must use `schemas/capacity-contract-2.0.schema.json` and scaling recommendations
 use `schemas/scaling-recommendation-2.0.schema.json`.
+
+These schemas describe normalized output documents produced by `to_dict()`.
+CLI input files may omit nullable/defaulted fields; the dependency-free Python
+parsers enforce their input contracts directly.
 
 ## Roadmap
 

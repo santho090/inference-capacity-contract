@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import unittest
 from dataclasses import replace
@@ -61,6 +62,10 @@ class InputValidationTests(unittest.TestCase):
         model["parameter_count"] = "100"
         with self.assertRaisesRegex(ContractError, "integer"):
             ModelSpec.from_dict(model)
+        missing_revision = _model().to_dict()
+        del missing_revision["revision"]
+        with self.assertRaisesRegex(ContractError, "missing required field 'revision'"):
+            ModelSpec.from_dict(missing_revision)
 
         hardware = _hardware().to_dict()
         hardware["memory_bytes_per_device"] = "100"
@@ -81,6 +86,11 @@ class InputValidationTests(unittest.TestCase):
         contract["memory_bytes_per_device"]["weights"] = "200"
         with self.assertRaisesRegex(ContractError, "integer"):
             CapacityContract.from_dict(contract)
+
+        malformed_nested = capacity_for(_model(), _hardware(), _runtime()).to_dict()
+        malformed_nested["runtime"]["supported_vendors"] = "nvidia"
+        with self.assertRaisesRegex(ContractError, "array"):
+            CapacityContract.from_dict(malformed_nested)
 
     def test_non_finite_numbers_are_rejected_at_the_domain_boundary(self) -> None:
         for value in (math.nan, math.inf, -math.inf):
@@ -182,6 +192,15 @@ class InputValidationTests(unittest.TestCase):
 
     def test_contract_semantic_invariants_reject_tampering(self) -> None:
         original = capacity_for(_model(), _hardware(), _runtime()).to_dict()
+        tampered_ledger = json.loads(json.dumps(original))
+        tampered_ledger["memory_bytes_per_device"]["usable_budget"] = 0
+        with self.assertRaisesRegex(ContractError, "memory_bytes_per_device is inconsistent"):
+            CapacityContract.from_dict(tampered_ledger)
+
+        inconsistent_fit = {**original, "fits": False}
+        with self.assertRaisesRegex(ContractError, "fits is inconsistent"):
+            CapacityContract.from_dict(inconsistent_fit)
+
         mutations = (
             ("schema_version", "wrong"),
             ("kv_bytes_per_token_per_device", 0),
@@ -200,6 +219,14 @@ class InputValidationTests(unittest.TestCase):
         inconsistent_tokens = {**original, "kv_capacity_tokens_per_device": 1}
         with self.assertRaisesRegex(ContractError, "block capacity"):
             CapacityContract.from_dict(inconsistent_tokens)
+
+        no_envelope = {**original, "concurrency_envelope": []}
+        with self.assertRaisesRegex(ContractError, "concurrency envelope"):
+            CapacityContract.from_dict(no_envelope)
+
+        no_evidence = {**original, "evidence": []}
+        with self.assertRaisesRegex(ContractError, "provenance"):
+            CapacityContract.from_dict(no_evidence)
 
 
 class ScalingRuleTests(unittest.TestCase):
@@ -242,7 +269,21 @@ class ScalingRuleTests(unittest.TestCase):
         self.assertEqual(idle.required_replicas, 0)
         self.assertEqual(idle.recommended_replicas, 2)
         self.assertTrue(idle.within_bounds)
+        self.assertEqual(idle.constrained_by, "min-replicas-floor")
+        self.assertEqual(idle.drivers, {})
         self.assertIn("reducing replicas", " ".join(idle.suggestions))
+
+    def test_unused_concurrency_measurement_does_not_emit_a_false_bound_warning(self) -> None:
+        contract = capacity_for(_model(), _hardware(), _runtime())
+        recommendation = recommend_scale(
+            contract,
+            _profile(
+                request_rate_per_second=0,
+                sustainable_concurrent_sequences_per_replica=1_000,
+                concurrency_context_tokens=128,
+            ),
+        )
+        self.assertNotIn("analytical KV bound", " ".join(recommendation.warnings))
 
 
 if __name__ == "__main__":

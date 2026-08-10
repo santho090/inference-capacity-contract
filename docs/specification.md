@@ -20,6 +20,10 @@ memory calculation.
 | `hardware` | ID, vendor, device count, memory per device | Devices allocated to one tensor-parallel replica. |
 | `runtime` | engine/version, TP size, KV dtype, block size, reserves | One pinned runtime variant. TP greater than one requires an explicit per-device KV-head layout; exact non-uniform weight layouts use a per-device byte override. |
 
+For TP greater than one, `kv_heads_per_device` is the maximum number resident
+on any device. The product of that value and TP size must cover all logical KV
+heads. This permits replication without allowing an under-counted layout.
+
 ## Memory ledger
 
 `memory_bytes_per_device` contains:
@@ -62,6 +66,10 @@ Consumers may call the Python contract's `max_sequences_at(context_tokens)` for
 another point. The schema deliberately has no context-free maximum sequence
 field because the quantity is not a scalar.
 
+These capacities are per device because every TP device stores a shard of the
+same sequences. They are already the replica bottleneck and must not be
+multiplied by `hardware.device_count`.
+
 ## Compatibility and failure behavior
 
 `fits=true` requires:
@@ -96,6 +104,10 @@ and—when price is available—hourly cost and cost delta. It is a policy input
 not an actuation command.
 
 ## Schema history
+
+The schemas describe normalized output from `to_dict()`, where nullable and
+defaulted fields are materialized. Hand-written CLI input documents may omit
+defaults and are validated by the dependency-free Python parsers.
 
 - `capacity-contract-1.0`: historical alpha schema with an invalid scalar
   sequence bound; retained for reference only.

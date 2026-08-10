@@ -118,6 +118,14 @@ class CapacityPropertyTests(unittest.TestCase):
                 _runtime(tensor_parallel_size=2, kv_heads_per_device=3),
             )
 
+    def test_kv_heads_per_device_must_cover_the_replica_layout(self) -> None:
+        with self.assertRaisesRegex(ContractError, "under-represents"):
+            capacity_for(
+                _model(num_kv_heads=8),
+                HardwareSpec("tp2", "nvidia", 2, 10_000, memory_utilization_limit=1.0),
+                _runtime(tensor_parallel_size=2, kv_heads_per_device=1),
+            )
+
     def test_exactly_one_kv_block_fits_and_one_byte_less_does_not(self) -> None:
         # KV bytes/token = 2 (K and V) * 1 layer * 1 head * 1 dim * 2 BF16 bytes = 4.
         # Four tokens per block therefore require exactly 16 bytes.
@@ -235,6 +243,8 @@ class CapacityPropertyTests(unittest.TestCase):
             capacity_for(*args, context_points=(0,))
         with self.assertRaisesRegex(ContractError, "max_context_tokens"):
             capacity_for(*args, context_points=(65,))
+        with self.assertRaisesRegex(ContractError, "cannot be empty"):
+            capacity_for(*args, context_points=())
 
     def test_scaling_rejects_concurrency_context_outside_contract(self) -> None:
         contract = capacity_for(

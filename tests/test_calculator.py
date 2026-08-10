@@ -128,6 +128,16 @@ class CalculatorTests(unittest.TestCase):
         self.assertFalse(contract.fits)
         self.assertEqual(contract.kv_capacity_tokens_per_device, 0)
 
+    def test_non_fitting_contract_ignores_requested_envelope_points(self) -> None:
+        contract = capacity_for(
+            model_7b(explicit_weight_bytes=100 * GIB),
+            HardwareSpec("h100-80gb", "nvidia", 1, 80 * GIB),
+            runtime(),
+            context_points=(1024,),
+        )
+        self.assertFalse(contract.fits)
+        self.assertEqual(contract.concurrency_envelope, ())
+
     def test_custom_attention_requires_explicit_kv_formula(self) -> None:
         with self.assertRaises(ContractError):
             capacity_for(
@@ -177,7 +187,8 @@ class CalculatorTests(unittest.TestCase):
             metrics={"prefill_tps": 1200},
         )
         restored = CapacityContract.from_dict(json.loads(json.dumps(contract.with_evidence(evidence).to_dict())))
-        self.assertEqual(restored.evidence[0].evidence_id, "run-001")
+        self.assertEqual(restored.evidence[0].kind, EvidenceKind.ANALYTICAL)
+        self.assertEqual(restored.evidence[-1].evidence_id, "run-001")
         self.assertEqual(
             restored.validation_level,
             ValidationLevel.ANALYTICALLY_FEASIBLE,

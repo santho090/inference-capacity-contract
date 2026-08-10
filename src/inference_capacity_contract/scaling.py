@@ -92,10 +92,12 @@ def recommend_scale(contract: CapacityContract, profile: WorkloadProfile) -> Sca
     drivers: dict[str, int] = {}
     unmeasured_drivers: list[str] = []
     for name, value in demand.items():
+        if value <= 0:
+            continue
         required = _required(value, capacities[name], profile.target_utilization)
         if required is not None:
             drivers[name] = required
-        elif value > 0:
+        else:
             unmeasured_drivers.append(name)
     if profile.peak_concurrent_sequences is not None:
         if profile.concurrency_context_tokens is None:
@@ -136,7 +138,8 @@ def recommend_scale(contract: CapacityContract, profile: WorkloadProfile) -> Sca
         warnings.extend(f"{name} demand has no measured per-replica capacity" for name in unmeasured_drivers)
         warnings.append("recommendation is incomplete until every non-zero demand driver is measured")
     if (
-        profile.sustainable_concurrent_sequences_per_replica is not None
+        profile.peak_concurrent_sequences is not None
+        and profile.sustainable_concurrent_sequences_per_replica is not None
         and profile.concurrency_context_tokens is not None
         and profile.sustainable_concurrent_sequences_per_replica
         > contract.max_sequences_at(profile.concurrency_context_tokens)
@@ -144,7 +147,7 @@ def recommend_scale(contract: CapacityContract, profile: WorkloadProfile) -> Sca
         warnings.append("measured concurrency exceeds the analytical KV bound; the analytical bound was used")
     if not within_bounds:
         warnings.append("recommended replica count cannot satisfy measured demand within configured bounds")
-    constrained_by = max(drivers.items(), key=lambda item: item[1])[0] if drivers else "unmeasured-capacity"
+    constrained_by = max(drivers.items(), key=lambda item: item[1])[0] if drivers else "min-replicas-floor"
 
     gpu_hours = float(recommended * contract.hardware.device_count)
     gpu_hour_savings = None
@@ -171,7 +174,10 @@ def recommend_scale(contract: CapacityContract, profile: WorkloadProfile) -> Sca
         )
     else:
         suggestions.append("use the recommendation as a policy input and validate it against a live canary")
-    suggestions.append(f"collect a new measured profile when the {constrained_by} driver changes materially")
+    if drivers:
+        suggestions.append(f"collect a new measured profile when the {constrained_by} driver changes materially")
+    else:
+        suggestions.append("review min_replicas before reducing the idle floor")
 
     return ScalingRecommendation(
         schema_version="scaling-recommendation-2.0",

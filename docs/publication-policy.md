@@ -11,7 +11,8 @@ Private deployments can provide model catalogs, cloud prices, GPU discovery, mea
 
 Before a release, verify:
 
-1. the package builds from a clean checkout without network access;
+1. after the declared build backend is provisioned, the package builds from a
+   clean checkout with `PIP_NO_INDEX=1` and no build isolation;
 2. tests and the CLI run from the source tree and installed wheel;
 3. the root license and security policy are present;
 4. fixtures contain no private identifiers; and

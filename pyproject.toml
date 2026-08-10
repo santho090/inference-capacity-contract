@@ -22,8 +22,10 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = [
+  "hatchling>=1.27,<2",
   "jsonschema>=4.23,<5",
   "mypy>=1.13,<2",
+  "referencing>=0.35,<1",
   "ruff>=0.8,<1",
   "types-jsonschema>=4.23,<5",
 ]
@@ -46,6 +48,3 @@ warn_unused_ignores = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/inference_capacity_contract"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
