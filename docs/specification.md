@@ -18,7 +18,7 @@ memory calculation.
 |---|---|---|
 | `model` | immutable ID/revision, parameter count, layers, KV heads, head dimension | One model artifact. Explicit resident bytes override nominal dtype arithmetic. |
 | `hardware` | ID, vendor, device count, memory per device | Devices allocated to one tensor-parallel replica. |
-| `runtime` | engine/version, TP size, KV dtype, block size, reserves | One pinned runtime variant. TP greater than one requires an explicit per-device KV-head layout. |
+| `runtime` | engine/version, TP size, KV dtype, block size, reserves | One pinned runtime variant. TP greater than one requires an explicit per-device KV-head layout; exact non-uniform weight layouts use a per-device byte override. |
 
 ## Memory ledger
 
@@ -35,9 +35,11 @@ runtime unless matching evidence is attached.
 
 ## KV and concurrency
 
-For standard attention, the calculator derives per-device KV bytes/token from
-the layers, KV heads resident on that device, head dimension, and KV dtype.
-MLA/custom attention requires an explicit per-device override.
+For uniform full self-attention with equal K/V dimensions, the calculator
+derives per-device KV bytes/token from the layers, KV heads resident on that
+device, head dimension, and KV dtype. MLA, hybrid cache groups, unequal K/V
+dimensions, sub-byte formats, and custom attention require an explicit
+per-device override.
 
 ```text
 bytes_per_block_per_device

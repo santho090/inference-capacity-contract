@@ -63,8 +63,9 @@ def recommend_scale(contract: CapacityContract, profile: WorkloadProfile) -> Sca
     """Calculate a measured-profile replica recommendation.
 
     The function refuses to produce a recommendation from static memory fit
-    alone. At least one measured evidence record and a scope match are required.
-    The returned value is a plan input, not a Kubernetes or cloud action.
+    alone. At least one measured evidence record and an exact profile identity
+    match are required. The returned value is a plan input, not a Kubernetes or
+    cloud action.
     """
 
     if not contract.fits:
@@ -102,6 +103,11 @@ def recommend_scale(contract: CapacityContract, profile: WorkloadProfile) -> Sca
         if profile.sustainable_concurrent_sequences_per_replica is None:
             raise ContractError(
                 "sustainable_concurrent_sequences_per_replica is required with peak_concurrent_sequences"
+            )
+        if profile.concurrency_context_tokens > contract.max_context_tokens:
+            raise ContractError(
+                "concurrency_context_tokens exceeds the contract's supported context; "
+                "choose another candidate or reduce the context requirement"
             )
         analytical_concurrency_limit = contract.max_sequences_at(profile.concurrency_context_tokens)
         sustainable_concurrency = min(

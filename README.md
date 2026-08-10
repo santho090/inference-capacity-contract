@@ -135,8 +135,15 @@ max sequences at context = floor(KV blocks / blocks per sequence)
 Tensor-parallel KV layout is runtime-specific. For tensor parallelism greater
 than one, the caller or future runtime adapter must provide
 `kv_heads_per_device`. The library will not silently assume that KV heads are
-sharded or replicated. MLA and custom attention similarly require an explicit
-per-device KV-bytes/token override.
+sharded or replicated. MLA, hybrid cache groups, unequal K/V dimensions,
+sub-byte KV formats, and custom attention similarly require an explicit
+per-device KV-bytes/token override. The closed-form calculation is only for
+uniform full-attention K/V storage.
+
+Tensor-parallel weight sharding can also contain replicated tensors or uneven
+shards. Without `weight_bytes_per_device_override`, the analytical fallback
+divides total artifact bytes evenly and emits a warning. Runtime adapters should
+provide the measured or manifest-derived per-device value when available.
 
 ## Validation levels
 

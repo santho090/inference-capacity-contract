@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from math import ceil
+from decimal import Decimal
 from typing import Any
 
 from .models import (
@@ -24,8 +24,10 @@ def _kv_bytes_per_token_per_device(model: ModelSpec, runtime: RuntimeVariant) ->
     override = model.kv_bytes_per_token_per_device_override
     if override is not None:
         return override
-    if model.attention_type in {"mla", "custom"}:
-        raise ContractError("MLA/custom attention requires kv_bytes_per_token_per_device_override")
+    if model.attention_type in {"mla", "hybrid", "custom"} or runtime.kv_cache_dtype == "int4":
+        raise ContractError(
+            "MLA, hybrid, custom, and sub-byte KV layouts require kv_bytes_per_token_per_device_override"
+        )
     if runtime.tensor_parallel_size == 1:
         kv_heads_per_device = model.num_kv_heads
     elif runtime.kv_heads_per_device is None:
@@ -34,7 +36,8 @@ def _kv_bytes_per_token_per_device(model: ModelSpec, runtime: RuntimeVariant) ->
         kv_heads_per_device = runtime.kv_heads_per_device
     if kv_heads_per_device > model.num_kv_heads:
         raise ContractError("kv_heads_per_device cannot exceed model num_kv_heads")
-    return int(2 * model.num_layers * kv_heads_per_device * model.head_dim * WEIGHT_BYTES[runtime.kv_cache_dtype])
+    kv_elements_per_token = 2 * model.num_layers * kv_heads_per_device * model.head_dim
+    return kv_elements_per_token * int(WEIGHT_BYTES[runtime.kv_cache_dtype])
 
 
 def _context_points(max_context_tokens: int, block_size_tokens: int) -> tuple[int, ...]:
@@ -56,6 +59,10 @@ def _context_points(max_context_tokens: int, block_size_tokens: int) -> tuple[in
     return tuple(sorted(point for point in candidates if 0 < point <= max_context_tokens))
 
 
+def _ceil_div(numerator: int, denominator: int) -> int:
+    return (numerator + denominator - 1) // denominator
+
+
 def capacity_for(
     model: ModelSpec,
     hardware: HardwareSpec,
@@ -67,7 +74,6 @@ def capacity_for(
 
     warnings: list[str] = []
     assumptions: list[str] = [
-        "Weights are divided evenly across tensor-parallel devices.",
         "KV cache uses paged storage with the declared block size.",
         "KV bytes are calculated per device using the declared runtime KV layout.",
         "Activation and runtime reserves are explicit inputs; no runtime profiling is performed.",
@@ -84,8 +90,18 @@ def capacity_for(
             f"tensor_parallel_size={runtime.tensor_parallel_size}"
         )
 
-    usable_bytes = int(hardware.memory_bytes_per_device * hardware.memory_utilization_limit)
-    weights_per_device = ceil(model.weight_bytes / runtime.tensor_parallel_size)
+    usable_bytes = int(Decimal(hardware.memory_bytes_per_device) * Decimal(str(hardware.memory_utilization_limit)))
+    if runtime.weight_bytes_per_device_override is not None:
+        weights_per_device = runtime.weight_bytes_per_device_override
+        assumptions.append("Per-device resident weight bytes use the explicit runtime override.")
+    else:
+        weights_per_device = _ceil_div(model.weight_bytes, runtime.tensor_parallel_size)
+        assumptions.append("Weights are divided evenly across tensor-parallel devices.")
+        if runtime.tensor_parallel_size > 1:
+            warnings.append(
+                "tensor-parallel weight bytes assume even sharding with no replicated tensors or metadata; "
+                "provide weight_bytes_per_device_override for an exact layout"
+            )
     runtime_reserve = runtime.runtime_overhead_bytes_per_device
     activation_reserve = runtime.activation_reserve_bytes_per_device
     kv_available = usable_bytes - weights_per_device - runtime_reserve - activation_reserve
@@ -125,7 +141,7 @@ def capacity_for(
 
     envelope: list[ConcurrencyPoint] = []
     for context_tokens in sampled_points:
-        blocks_per_sequence = ceil(context_tokens / runtime.block_size_tokens)
+        blocks_per_sequence = _ceil_div(context_tokens, runtime.block_size_tokens)
         max_sequences = kv_capacity_blocks // blocks_per_sequence
         if runtime.max_num_seqs is not None:
             max_sequences = min(max_sequences, runtime.max_num_seqs)

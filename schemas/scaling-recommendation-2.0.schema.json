@@ -103,8 +103,27 @@
         "min_replicas": {"type": "integer", "minimum": 1},
         "max_replicas": {"type": ["integer", "null"], "minimum": 1},
         "baseline_replicas": {"type": ["integer", "null"], "minimum": 1},
-        "evidence": {"type": "array", "items": {"type": "object"}}
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/evidence"
+          }
+        }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"peak_concurrent_sequences": {"type": "integer"}},
+            "required": ["peak_concurrent_sequences"]
+          },
+          "then": {
+            "properties": {
+              "concurrency_context_tokens": {"type": "integer", "minimum": 1},
+              "sustainable_concurrent_sequences_per_replica": {"type": "integer", "minimum": 1}
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     }
   },

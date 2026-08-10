@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from math import ceil
+from math import isfinite
 from typing import Any
 
 
@@ -37,25 +37,52 @@ WEIGHT_BYTES: dict[str, float] = {
 
 
 def _positive(name: str, value: int | float) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ContractError(f"{name} must be a number")
+    if isinstance(value, float) and not isfinite(value):
+        raise ContractError(f"{name} must be finite")
     if value <= 0:
         raise ContractError(f"{name} must be positive, got {value!r}")
 
 
 def _fraction(name: str, value: float) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(float(value)):
+        raise ContractError(f"{name} must be a finite number in (0, 1]")
     if not 0 < value <= 1:
         raise ContractError(f"{name} must be in (0, 1], got {value!r}")
 
 
-def _optional_int(value: Any) -> int | None:
-    return None if value is None else int(value)
+def _required_int(name: str, value: Any) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ContractError(f"{name} must be an integer")
+    return value
 
 
-def _optional_float(value: Any) -> float | None:
-    return None if value is None else float(value)
+def _optional_int(name: str, value: Any) -> int | None:
+    return None if value is None else _required_int(name, value)
 
 
-def _optional_str(value: Any) -> str | None:
-    return None if value is None else str(value)
+def _required_float(name: str, value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ContractError(f"{name} must be a number")
+    converted = float(value)
+    if not isfinite(converted):
+        raise ContractError(f"{name} must be finite")
+    return converted
+
+
+def _optional_float(name: str, value: Any) -> float | None:
+    return None if value is None else _required_float(name, value)
+
+
+def _required_str(name: str, value: Any) -> str:
+    if not isinstance(value, str):
+        raise ContractError(f"{name} must be a string")
+    return value
+
+
+def _optional_str(name: str, value: Any) -> str | None:
+    return None if value is None else _required_str(name, value)
 
 
 def _required_bool(name: str, value: Any) -> bool:
@@ -82,29 +109,39 @@ class ModelSpec:
     architecture: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.model_id or not self.revision:
+        if (
+            not isinstance(self.model_id, str)
+            or not isinstance(self.revision, str)
+            or not self.model_id
+            or not self.revision
+        ):
             raise ContractError("model_id and revision are required")
         for name in ("parameter_count", "num_layers", "num_kv_heads", "head_dim"):
-            _positive(name, int(getattr(self, name)))
+            _positive(name, _required_int(name, getattr(self, name)))
         if self.weight_dtype not in WEIGHT_BYTES and self.explicit_weight_bytes is None:
             raise ContractError(f"unsupported weight_dtype {self.weight_dtype!r}; provide explicit_weight_bytes")
         if self.max_model_len is not None:
-            _positive("max_model_len", self.max_model_len)
+            _positive("max_model_len", _required_int("max_model_len", self.max_model_len))
         if self.explicit_weight_bytes is not None:
-            _positive("explicit_weight_bytes", self.explicit_weight_bytes)
+            _positive("explicit_weight_bytes", _required_int("explicit_weight_bytes", self.explicit_weight_bytes))
         if self.kv_bytes_per_token_per_device_override is not None:
             _positive(
                 "kv_bytes_per_token_per_device_override",
-                self.kv_bytes_per_token_per_device_override,
+                _required_int(
+                    "kv_bytes_per_token_per_device_override",
+                    self.kv_bytes_per_token_per_device_override,
+                ),
             )
-        if self.attention_type not in {"mha", "gqa", "mqa", "mla", "custom"}:
+        if self.attention_type not in {"mha", "gqa", "mqa", "mla", "hybrid", "custom"}:
             raise ContractError(f"unsupported attention_type {self.attention_type!r}")
 
     @property
     def weight_bytes(self) -> int:
         if self.explicit_weight_bytes is not None:
             return self.explicit_weight_bytes
-        return int(self.parameter_count * WEIGHT_BYTES[self.weight_dtype])
+        if self.weight_dtype == "int4":
+            return (self.parameter_count + 1) // 2
+        return self.parameter_count * int(WEIGHT_BYTES[self.weight_dtype])
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -128,18 +165,18 @@ class ModelSpec:
         if override is None:
             override = data.get("kv_bytes_per_token_override")
         return cls(
-            model_id=str(data["model_id"]),
-            revision=str(data["revision"]),
-            parameter_count=int(data["parameter_count"]),
-            num_layers=int(data["num_layers"]),
-            num_kv_heads=int(data["num_kv_heads"]),
-            head_dim=int(data["head_dim"]),
-            weight_dtype=str(data.get("weight_dtype", "bf16")),
-            max_model_len=_optional_int(data.get("max_model_len")),
-            explicit_weight_bytes=_optional_int(data.get("explicit_weight_bytes")),
-            attention_type=str(data.get("attention_type", "gqa")),
-            kv_bytes_per_token_per_device_override=_optional_int(override),
-            architecture=_optional_str(data.get("architecture")),
+            model_id=_required_str("model_id", data["model_id"]),
+            revision=_required_str("revision", data["revision"]),
+            parameter_count=_required_int("parameter_count", data["parameter_count"]),
+            num_layers=_required_int("num_layers", data["num_layers"]),
+            num_kv_heads=_required_int("num_kv_heads", data["num_kv_heads"]),
+            head_dim=_required_int("head_dim", data["head_dim"]),
+            weight_dtype=_required_str("weight_dtype", data.get("weight_dtype", "bf16")),
+            max_model_len=_optional_int("max_model_len", data.get("max_model_len")),
+            explicit_weight_bytes=_optional_int("explicit_weight_bytes", data.get("explicit_weight_bytes")),
+            attention_type=_required_str("attention_type", data.get("attention_type", "gqa")),
+            kv_bytes_per_token_per_device_override=_optional_int("kv_bytes_per_token_per_device_override", override),
+            architecture=_optional_str("architecture", data.get("architecture")),
         )
 
 
@@ -156,13 +193,20 @@ class HardwareSpec:
     interconnect: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.hardware_id or not self.vendor:
+        if (
+            not isinstance(self.hardware_id, str)
+            or not isinstance(self.vendor, str)
+            or not self.hardware_id
+            or not self.vendor
+        ):
             raise ContractError("hardware_id and vendor are required")
-        _positive("device_count", self.device_count)
-        _positive("memory_bytes_per_device", self.memory_bytes_per_device)
+        _positive("device_count", _required_int("device_count", self.device_count))
+        _positive("memory_bytes_per_device", _required_int("memory_bytes_per_device", self.memory_bytes_per_device))
         _fraction("memory_utilization_limit", self.memory_utilization_limit)
-        if self.price_per_device_hour is not None and self.price_per_device_hour < 0:
-            raise ContractError("price_per_device_hour cannot be negative")
+        if self.price_per_device_hour is not None:
+            price = _required_float("price_per_device_hour", self.price_per_device_hour)
+            if price < 0:
+                raise ContractError("price_per_device_hour cannot be negative")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -178,13 +222,15 @@ class HardwareSpec:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> HardwareSpec:
         return cls(
-            hardware_id=str(data["hardware_id"]),
-            vendor=str(data["vendor"]),
-            device_count=int(data["device_count"]),
-            memory_bytes_per_device=int(data["memory_bytes_per_device"]),
-            memory_utilization_limit=float(data.get("memory_utilization_limit", 0.90)),
-            price_per_device_hour=_optional_float(data.get("price_per_device_hour")),
-            interconnect=_optional_str(data.get("interconnect")),
+            hardware_id=_required_str("hardware_id", data["hardware_id"]),
+            vendor=_required_str("vendor", data["vendor"]),
+            device_count=_required_int("device_count", data["device_count"]),
+            memory_bytes_per_device=_required_int("memory_bytes_per_device", data["memory_bytes_per_device"]),
+            memory_utilization_limit=_required_float(
+                "memory_utilization_limit", data.get("memory_utilization_limit", 0.90)
+            ),
+            price_per_device_hour=_optional_float("price_per_device_hour", data.get("price_per_device_hour")),
+            interconnect=_optional_str("interconnect", data.get("interconnect")),
         )
 
 
@@ -203,6 +249,7 @@ class RuntimeVariant:
     tensor_parallel_size: int = 1
     kv_cache_dtype: str = "bf16"
     kv_heads_per_device: int | None = None
+    weight_bytes_per_device_override: int | None = None
     runtime_overhead_bytes_per_device: int = 0
     activation_reserve_bytes_per_device: int = 0
     max_num_seqs: int | None = None
@@ -211,26 +258,34 @@ class RuntimeVariant:
     notes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.engine not in {"vllm", "sglang", "other"}:
+        if not isinstance(self.engine, str) or self.engine not in {"vllm", "sglang", "other"}:
             raise ContractError(f"unsupported engine {self.engine!r}")
-        if not self.version:
+        if not isinstance(self.version, str) or not self.version:
             raise ContractError("runtime version is required")
         for name in ("tensor_parallel_size", "block_size_tokens"):
-            _positive(name, int(getattr(self, name)))
+            _positive(name, _required_int(name, getattr(self, name)))
         if self.kv_heads_per_device is not None:
-            _positive("kv_heads_per_device", self.kv_heads_per_device)
+            _positive("kv_heads_per_device", _required_int("kv_heads_per_device", self.kv_heads_per_device))
+        if self.weight_bytes_per_device_override is not None:
+            _positive(
+                "weight_bytes_per_device_override",
+                _required_int("weight_bytes_per_device_override", self.weight_bytes_per_device_override),
+            )
         for name in (
             "runtime_overhead_bytes_per_device",
             "activation_reserve_bytes_per_device",
         ):
-            if int(getattr(self, name)) < 0:
+            value = _required_int(name, getattr(self, name))
+            if value < 0:
                 raise ContractError(f"{name} cannot be negative")
         if self.max_num_seqs is not None:
-            _positive("max_num_seqs", self.max_num_seqs)
+            _positive("max_num_seqs", _required_int("max_num_seqs", self.max_num_seqs))
         if self.kv_cache_dtype not in WEIGHT_BYTES:
             raise ContractError(f"unsupported kv_cache_dtype {self.kv_cache_dtype!r}")
-        if not self.supported_vendors:
+        if not self.supported_vendors or any(not isinstance(item, str) or not item for item in self.supported_vendors):
             raise ContractError("supported_vendors cannot be empty")
+        if any(not isinstance(item, str) for item in self.notes):
+            raise ContractError("runtime notes must be strings")
 
     @property
     def devices_required(self) -> int:
@@ -243,6 +298,7 @@ class RuntimeVariant:
             "tensor_parallel_size": self.tensor_parallel_size,
             "kv_cache_dtype": self.kv_cache_dtype,
             "kv_heads_per_device": self.kv_heads_per_device,
+            "weight_bytes_per_device_override": self.weight_bytes_per_device_override,
             "runtime_overhead_bytes_per_device": self.runtime_overhead_bytes_per_device,
             "activation_reserve_bytes_per_device": self.activation_reserve_bytes_per_device,
             "max_num_seqs": self.max_num_seqs,
@@ -253,24 +309,34 @@ class RuntimeVariant:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> RuntimeVariant:
-        legacy_dp = int(data.get("data_parallel_size", 1))
+        legacy_dp = _required_int("data_parallel_size", data.get("data_parallel_size", 1))
         if legacy_dp != 1:
             raise ContractError(
                 "data_parallel_size is not part of a per-replica runtime variant; "
                 "create multiple capacity contracts or replicas instead"
             )
         return cls(
-            engine=str(data["engine"]),
-            version=str(data["version"]),
-            tensor_parallel_size=int(data.get("tensor_parallel_size", 1)),
-            kv_cache_dtype=str(data.get("kv_cache_dtype", "bf16")),
-            kv_heads_per_device=_optional_int(data.get("kv_heads_per_device")),
-            runtime_overhead_bytes_per_device=int(data.get("runtime_overhead_bytes_per_device", 0)),
-            activation_reserve_bytes_per_device=int(data.get("activation_reserve_bytes_per_device", 0)),
-            max_num_seqs=_optional_int(data.get("max_num_seqs")),
-            block_size_tokens=int(data.get("block_size_tokens", 16)),
-            supported_vendors=tuple(str(item) for item in data.get("supported_vendors", ("nvidia", "amd"))),
-            notes=tuple(str(item) for item in data.get("notes", ())),
+            engine=_required_str("engine", data["engine"]),
+            version=_required_str("version", data["version"]),
+            tensor_parallel_size=_required_int("tensor_parallel_size", data.get("tensor_parallel_size", 1)),
+            kv_cache_dtype=_required_str("kv_cache_dtype", data.get("kv_cache_dtype", "bf16")),
+            kv_heads_per_device=_optional_int("kv_heads_per_device", data.get("kv_heads_per_device")),
+            weight_bytes_per_device_override=_optional_int(
+                "weight_bytes_per_device_override", data.get("weight_bytes_per_device_override")
+            ),
+            runtime_overhead_bytes_per_device=_required_int(
+                "runtime_overhead_bytes_per_device", data.get("runtime_overhead_bytes_per_device", 0)
+            ),
+            activation_reserve_bytes_per_device=_required_int(
+                "activation_reserve_bytes_per_device", data.get("activation_reserve_bytes_per_device", 0)
+            ),
+            max_num_seqs=_optional_int("max_num_seqs", data.get("max_num_seqs")),
+            block_size_tokens=_required_int("block_size_tokens", data.get("block_size_tokens", 16)),
+            supported_vendors=tuple(
+                _required_str("supported_vendors item", item)
+                for item in data.get("supported_vendors", ("nvidia", "amd"))
+            ),
+            notes=tuple(_required_str("notes item", item) for item in data.get("notes", ())),
         )
 
 
@@ -310,12 +376,12 @@ class EvidenceRecord:
         if not isinstance(metrics, Mapping):
             raise ContractError("evidence metrics must be an object")
         return cls(
-            evidence_id=str(data["evidence_id"]),
-            kind=EvidenceKind(str(data["kind"])),
-            source=str(data["source"]),
-            scope=str(data["scope"]),
-            metrics={str(key): value for key, value in metrics.items()},
-            collected_at=_optional_str(data.get("collected_at")),
+            evidence_id=_required_str("evidence_id", data["evidence_id"]),
+            kind=EvidenceKind(_required_str("kind", data["kind"])),
+            source=_required_str("source", data["source"]),
+            scope=_required_str("scope", data["scope"]),
+            metrics={_required_str("metrics key", key): value for key, value in metrics.items()},
+            collected_at=_optional_str("collected_at", data.get("collected_at")),
         )
 
 
@@ -354,14 +420,15 @@ class WorkloadProfile:
             self.runtime_engine,
             self.runtime_version,
         )
-        if not all(identities):
+        if not all(isinstance(value, str) and value for value in identities):
             raise ContractError("profile and variant identity fields are required")
         for name in (
             "request_rate_per_second",
             "input_tokens_per_request",
             "output_tokens_per_request",
         ):
-            if float(getattr(self, name)) < 0:
+            value = _required_float(name, getattr(self, name))
+            if value < 0:
                 raise ContractError(f"{name} cannot be negative")
         sustainable_fields = (
             "sustainable_requests_per_replica_per_second",
@@ -373,20 +440,27 @@ class WorkloadProfile:
             raise ContractError("at least one sustainable per-replica capacity is required")
         for name in sustainable_fields:
             value = getattr(self, name)
-            if value is not None and float(value) <= 0:
-                raise ContractError(f"{name} must be positive when provided")
+            if value is not None:
+                if name == "sustainable_concurrent_sequences_per_replica":
+                    _positive(name, _required_int(name, value))
+                else:
+                    _positive(name, _required_float(name, value))
         _fraction("target_utilization", self.target_utilization)
-        if self.scale_up_buffer < 1:
+        scale_up_buffer = _required_float("scale_up_buffer", self.scale_up_buffer)
+        if scale_up_buffer < 1:
             raise ContractError("scale_up_buffer must be at least 1")
-        _positive("min_replicas", self.min_replicas)
+        _positive("min_replicas", _required_int("min_replicas", self.min_replicas))
         if self.max_replicas is not None:
-            _positive("max_replicas", self.max_replicas)
+            _positive("max_replicas", _required_int("max_replicas", self.max_replicas))
             if self.max_replicas < self.min_replicas:
                 raise ContractError("max_replicas cannot be lower than min_replicas")
         if self.baseline_replicas is not None:
-            _positive("baseline_replicas", self.baseline_replicas)
+            _positive("baseline_replicas", _required_int("baseline_replicas", self.baseline_replicas))
         if self.peak_concurrent_sequences is not None:
-            _positive("peak_concurrent_sequences", self.peak_concurrent_sequences)
+            _positive(
+                "peak_concurrent_sequences",
+                _required_int("peak_concurrent_sequences", self.peak_concurrent_sequences),
+            )
             if self.concurrency_context_tokens is None:
                 raise ContractError("concurrency_context_tokens is required with peak_concurrent_sequences")
             if self.sustainable_concurrent_sequences_per_replica is None:
@@ -394,7 +468,10 @@ class WorkloadProfile:
                     "sustainable_concurrent_sequences_per_replica is required with peak_concurrent_sequences"
                 )
         if self.concurrency_context_tokens is not None:
-            _positive("concurrency_context_tokens", self.concurrency_context_tokens)
+            _positive(
+                "concurrency_context_tokens",
+                _required_int("concurrency_context_tokens", self.concurrency_context_tokens),
+            )
         object.__setattr__(self, "evidence", tuple(self.evidence))
 
     def to_dict(self) -> dict[str, Any]:
@@ -428,34 +505,42 @@ class WorkloadProfile:
     def from_dict(cls, data: Mapping[str, Any]) -> WorkloadProfile:
         raw_evidence = data.get("evidence", ())
         return cls(
-            profile_id=str(data["profile_id"]),
-            model_id=str(data["model_id"]),
-            model_revision=str(data["model_revision"]),
-            hardware_id=str(data["hardware_id"]),
-            runtime_engine=str(data["runtime_engine"]),
-            runtime_version=str(data["runtime_version"]),
-            request_rate_per_second=float(data["request_rate_per_second"]),
-            input_tokens_per_request=float(data.get("input_tokens_per_request", 0.0)),
-            output_tokens_per_request=float(data.get("output_tokens_per_request", 0.0)),
+            profile_id=_required_str("profile_id", data["profile_id"]),
+            model_id=_required_str("model_id", data["model_id"]),
+            model_revision=_required_str("model_revision", data["model_revision"]),
+            hardware_id=_required_str("hardware_id", data["hardware_id"]),
+            runtime_engine=_required_str("runtime_engine", data["runtime_engine"]),
+            runtime_version=_required_str("runtime_version", data["runtime_version"]),
+            request_rate_per_second=_required_float("request_rate_per_second", data["request_rate_per_second"]),
+            input_tokens_per_request=_required_float(
+                "input_tokens_per_request", data.get("input_tokens_per_request", 0.0)
+            ),
+            output_tokens_per_request=_required_float(
+                "output_tokens_per_request", data.get("output_tokens_per_request", 0.0)
+            ),
             sustainable_requests_per_replica_per_second=_optional_float(
-                data.get("sustainable_requests_per_replica_per_second")
+                "sustainable_requests_per_replica_per_second", data.get("sustainable_requests_per_replica_per_second")
             ),
             sustainable_prefill_tokens_per_replica_per_second=_optional_float(
-                data.get("sustainable_prefill_tokens_per_replica_per_second")
+                "sustainable_prefill_tokens_per_replica_per_second",
+                data.get("sustainable_prefill_tokens_per_replica_per_second"),
             ),
             sustainable_decode_tokens_per_replica_per_second=_optional_float(
-                data.get("sustainable_decode_tokens_per_replica_per_second")
+                "sustainable_decode_tokens_per_replica_per_second",
+                data.get("sustainable_decode_tokens_per_replica_per_second"),
             ),
             sustainable_concurrent_sequences_per_replica=_optional_int(
-                data.get("sustainable_concurrent_sequences_per_replica")
+                "sustainable_concurrent_sequences_per_replica", data.get("sustainable_concurrent_sequences_per_replica")
             ),
-            peak_concurrent_sequences=_optional_int(data.get("peak_concurrent_sequences")),
-            concurrency_context_tokens=_optional_int(data.get("concurrency_context_tokens")),
-            target_utilization=float(data.get("target_utilization", 0.70)),
-            scale_up_buffer=float(data.get("scale_up_buffer", 1.15)),
-            min_replicas=int(data.get("min_replicas", 1)),
-            max_replicas=_optional_int(data.get("max_replicas")),
-            baseline_replicas=_optional_int(data.get("baseline_replicas")),
+            peak_concurrent_sequences=_optional_int("peak_concurrent_sequences", data.get("peak_concurrent_sequences")),
+            concurrency_context_tokens=_optional_int(
+                "concurrency_context_tokens", data.get("concurrency_context_tokens")
+            ),
+            target_utilization=_required_float("target_utilization", data.get("target_utilization", 0.70)),
+            scale_up_buffer=_required_float("scale_up_buffer", data.get("scale_up_buffer", 1.15)),
+            min_replicas=_required_int("min_replicas", data.get("min_replicas", 1)),
+            max_replicas=_optional_int("max_replicas", data.get("max_replicas")),
+            baseline_replicas=_optional_int("baseline_replicas", data.get("baseline_replicas")),
             evidence=tuple(EvidenceRecord.from_dict(item) for item in raw_evidence),
         )
 
@@ -490,8 +575,9 @@ class ConcurrencyPoint:
     max_sequences: int
 
     def __post_init__(self) -> None:
-        _positive("context_tokens", self.context_tokens)
-        _positive("blocks_per_sequence", self.blocks_per_sequence)
+        _positive("context_tokens", _required_int("context_tokens", self.context_tokens))
+        _positive("blocks_per_sequence", _required_int("blocks_per_sequence", self.blocks_per_sequence))
+        _required_int("max_sequences", self.max_sequences)
         if self.max_sequences < 0:
             raise ContractError("max_sequences cannot be negative")
 
@@ -505,9 +591,9 @@ class ConcurrencyPoint:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ConcurrencyPoint:
         return cls(
-            context_tokens=int(data["context_tokens"]),
-            blocks_per_sequence=int(data["blocks_per_sequence"]),
-            max_sequences=int(data["max_sequences"]),
+            context_tokens=_required_int("context_tokens", data["context_tokens"]),
+            blocks_per_sequence=_required_int("blocks_per_sequence", data["blocks_per_sequence"]),
+            max_sequences=_required_int("max_sequences", data["max_sequences"]),
         )
 
 
@@ -540,6 +626,7 @@ class CapacityContract:
         except (TypeError, ValueError) as exc:
             raise ContractError(f"unsupported validation_level {self.validation_level!r}") from exc
         object.__setattr__(self, "validation_level", normalized_level)
+        _required_bool("fits", self.fits)
 
         expected_memory_keys = {
             "usable_budget",
@@ -555,8 +642,17 @@ class CapacityContract:
             for value in self.memory_bytes_per_device.values()
         ):
             raise ContractError("memory_bytes_per_device values must be non-negative integers")
-        _positive("kv_bytes_per_token_per_device", self.kv_bytes_per_token_per_device)
-        _positive("kv_block_size_tokens", self.kv_block_size_tokens)
+        _positive(
+            "kv_bytes_per_token_per_device",
+            _required_int("kv_bytes_per_token_per_device", self.kv_bytes_per_token_per_device),
+        )
+        _positive(
+            "kv_block_size_tokens",
+            _required_int("kv_block_size_tokens", self.kv_block_size_tokens),
+        )
+        _required_int("kv_capacity_blocks_per_device", self.kv_capacity_blocks_per_device)
+        _required_int("kv_capacity_tokens_per_device", self.kv_capacity_tokens_per_device)
+        _required_int("max_context_tokens", self.max_context_tokens)
         if self.kv_capacity_blocks_per_device < 0 or self.kv_capacity_tokens_per_device < 0:
             raise ContractError("KV capacity cannot be negative")
         if self.max_context_tokens < 0:
@@ -576,7 +672,7 @@ class CapacityContract:
                 raise ContractError("concurrency_envelope context points must be strictly increasing")
             if point.context_tokens > self.max_context_tokens:
                 raise ContractError("concurrency_envelope cannot exceed max_context_tokens")
-            expected_blocks = ceil(point.context_tokens / self.kv_block_size_tokens)
+            expected_blocks = (point.context_tokens + self.kv_block_size_tokens - 1) // self.kv_block_size_tokens
             if point.blocks_per_sequence != expected_blocks:
                 raise ContractError("concurrency_envelope blocks_per_sequence is inconsistent with block size")
             expected_sequences = self.kv_capacity_blocks_per_device // expected_blocks
@@ -587,6 +683,8 @@ class CapacityContract:
             previous_context = point.context_tokens
 
         object.__setattr__(self, "concurrency_envelope", tuple(self.concurrency_envelope))
+        if any(not isinstance(item, str) for item in (*self.assumptions, *self.warnings)):
+            raise ContractError("assumptions and warnings must contain strings")
         object.__setattr__(self, "assumptions", tuple(self.assumptions))
         object.__setattr__(self, "warnings", tuple(self.warnings))
         object.__setattr__(self, "evidence", tuple(self.evidence))
@@ -597,7 +695,7 @@ class CapacityContract:
         _positive("context_tokens", context_tokens)
         if not self.fits or context_tokens > self.max_context_tokens:
             return 0
-        blocks_per_sequence = ceil(context_tokens / self.kv_block_size_tokens)
+        blocks_per_sequence = (context_tokens + self.kv_block_size_tokens - 1) // self.kv_block_size_tokens
         sequences = self.kv_capacity_blocks_per_device // blocks_per_sequence
         if self.runtime.max_num_seqs is not None:
             sequences = min(sequences, self.runtime.max_num_seqs)
@@ -632,24 +730,36 @@ class CapacityContract:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> CapacityContract:
-        schema_version = str(data["schema_version"])
+        schema_version = _required_str("schema_version", data["schema_version"])
         if schema_version != "capacity-contract-2.0":
             raise ContractError(f"unsupported schema_version {schema_version!r}; expected 'capacity-contract-2.0'")
+        raw_memory = data["memory_bytes_per_device"]
+        if not isinstance(raw_memory, Mapping):
+            raise ContractError("memory_bytes_per_device must be an object")
         return cls(
             schema_version=schema_version,
             model=ModelSpec.from_dict(data["model"]),
             hardware=HardwareSpec.from_dict(data["hardware"]),
             runtime=RuntimeVariant.from_dict(data["runtime"]),
             fits=_required_bool("fits", data["fits"]),
-            validation_level=ValidationLevel(str(data["validation_level"])),
-            memory_bytes_per_device={str(key): int(value) for key, value in data["memory_bytes_per_device"].items()},
-            kv_bytes_per_token_per_device=int(data["kv_bytes_per_token_per_device"]),
-            kv_block_size_tokens=int(data["kv_block_size_tokens"]),
-            kv_capacity_blocks_per_device=int(data["kv_capacity_blocks_per_device"]),
-            kv_capacity_tokens_per_device=int(data["kv_capacity_tokens_per_device"]),
-            max_context_tokens=int(data["max_context_tokens"]),
+            validation_level=ValidationLevel(_required_str("validation_level", data["validation_level"])),
+            memory_bytes_per_device={
+                _required_str("memory ledger key", key): _required_int("memory ledger value", value)
+                for key, value in raw_memory.items()
+            },
+            kv_bytes_per_token_per_device=_required_int(
+                "kv_bytes_per_token_per_device", data["kv_bytes_per_token_per_device"]
+            ),
+            kv_block_size_tokens=_required_int("kv_block_size_tokens", data["kv_block_size_tokens"]),
+            kv_capacity_blocks_per_device=_required_int(
+                "kv_capacity_blocks_per_device", data["kv_capacity_blocks_per_device"]
+            ),
+            kv_capacity_tokens_per_device=_required_int(
+                "kv_capacity_tokens_per_device", data["kv_capacity_tokens_per_device"]
+            ),
+            max_context_tokens=_required_int("max_context_tokens", data["max_context_tokens"]),
             concurrency_envelope=tuple(ConcurrencyPoint.from_dict(item) for item in data["concurrency_envelope"]),
-            assumptions=tuple(str(item) for item in data.get("assumptions", ())),
-            warnings=tuple(str(item) for item in data.get("warnings", ())),
+            assumptions=tuple(_required_str("assumptions item", item) for item in data.get("assumptions", ())),
+            warnings=tuple(_required_str("warnings item", item) for item in data.get("warnings", ())),
             evidence=tuple(EvidenceRecord.from_dict(item) for item in data.get("evidence", ())),
         )
