@@ -103,6 +103,51 @@ The recommendation reports replica count, GPU-hours per hour, and GPU-hour
 delta. When a price is available, it also reports hourly cost and cost delta.
 The result is a policy input, not an actuation command.
 
+## Serving recipe audit
+
+`serving-recipe-1.0` adds the host-level topology that a per-replica contract
+does not contain. `tensor_parallel_size * data_parallel_size` is the number of
+engine ranks. `physical_device_count` is the number of devices allocated to
+the group. `independent_kv_ranks` says how many ranks own separate KV pools.
+
+The audit calculates one KV-rank contract using the TP device count, then
+multiplies sequence and KV-token capacity by the number of independent KV
+ranks. It does not multiply capacity by expert-parallel size. EP changes model
+placement, so an EP recipe must supply resident weight bytes per device.
+
+For a context or concurrency-only request, the analytical memory bound can
+produce a group count. Nonzero RPS, prefill TPS, or decode TPS requires the
+matching measured per-group capacity. TTFT and TPOT targets require observed
+values. Missing measurements produce `incomplete`, not a guessed result.
+
+`MeasuredGroupProfile` binds those values to a SHA-256 fingerprint of the
+recipe's model, host, runtime, topology, and llm-d settings. It also records the
+context and request shape used by the measurement. One measured evidence record
+must carry that identity and every populated traffic, concurrency, and latency
+metric. This keeps latency and capacity tied to one operating point. The audit
+rejects a profile when its fingerprint, context, or supplied request shape
+differs from the requested recipe and load.
+
+The fingerprint preimage includes `serving-recipe-variant-1.0`. The audit
+recomputes it from the supplied recipe. Recipe names, configured group count,
+evidence, and device price are excluded because they do not change per-group
+performance. Runtime notes and vendor-support metadata are also excluded, and
+numeric fields are canonicalized before hashing.
+
+Demand may be supplied as RPS and tokens per request or as direct prefill and
+decode TPS. When both forms are supplied, their token rates must agree.
+`context_tokens` is the peak active prompt plus generated tokens per sequence.
+Latency targets and observations must use the same explicit percentile.
+
+The audit also compares llm-d block size, flow-control token limit, and maximum
+concurrent sequences with the calculated runtime values. A mismatch makes the
+recipe `invalid`. The result records `recipe-audit-formula-1.0` and the recipe
+fingerprint used for every derived group and device count.
+
+This schema does not represent pipeline parallelism or separate prefill and
+decode worker pools. Adapters must reject those topologies rather than map them
+to TP/DP/EP defaults.
+
 ## Schema history
 
 The schemas describe normalized output from `to_dict()`, including nullable and
@@ -113,3 +158,5 @@ validated by the dependency-free Python parsers.
   sequence bound; retained for reference only.
 - `capacity-contract-2.0`: current breaking schema with block/token budgets and
   a context-dependent concurrency envelope.
+- `serving-recipe-1.0`, `load-requirement-1.0`, and `recipe-audit-1.0`: host
+  topology, requested load, and the resulting configuration audit.

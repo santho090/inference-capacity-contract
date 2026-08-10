@@ -2,18 +2,24 @@ from __future__ import annotations
 
 import json
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from jsonschema import Draft202012Validator, ValidationError
 from referencing import Registry, Resource
 
 from inference_capacity_contract import (
+    RECIPE_VARIANT_FINGERPRINT_VERSION,
     EvidenceKind,
     EvidenceRecord,
     HardwareSpec,
+    LoadRequirement,
+    MeasuredGroupProfile,
     ModelSpec,
     RuntimeVariant,
+    ServingRecipe,
     WorkloadProfile,
+    audit_recipe,
     capacity_for,
     recommend_scale,
 )
@@ -33,8 +39,71 @@ class SchemaTests(unittest.TestCase):
     def setUp(self) -> None:
         self.capacity_schema = _read_schema("capacity-contract-2.0.schema.json")
         self.scaling_schema = _read_schema("scaling-recommendation-2.0.schema.json")
+        self.recipe_schema = _read_schema("serving-recipe-1.0.schema.json")
+        self.load_schema = _read_schema("load-requirement-1.0.schema.json")
+        self.audit_schema = _read_schema("recipe-audit-1.0.schema.json")
         Draft202012Validator.check_schema(self.capacity_schema)
         Draft202012Validator.check_schema(self.scaling_schema)
+        Draft202012Validator.check_schema(self.recipe_schema)
+        Draft202012Validator.check_schema(self.load_schema)
+        Draft202012Validator.check_schema(self.audit_schema)
+
+    def test_recipe_load_and_audit_documents_validate(self) -> None:
+        recipe_document = json.loads(
+            (ROOT / "docs" / "fixtures" / "serving-recipe-hybrid-tp8.json").read_text(encoding="utf-8")
+        )
+        load_document = json.loads(
+            (ROOT / "docs" / "fixtures" / "load-context-concurrency.json").read_text(encoding="utf-8")
+        )
+        recipe = ServingRecipe.from_dict(recipe_document)
+        load = LoadRequirement.from_dict(load_document)
+        audit = audit_recipe(recipe, load).to_dict()
+
+        registry = Registry()
+        for schema in (self.capacity_schema, self.recipe_schema, self.load_schema):
+            registry = registry.with_resource(str(schema["$id"]), Resource.from_contents(schema))
+        Draft202012Validator(self.recipe_schema, registry=registry).validate(recipe.to_dict())
+        Draft202012Validator(self.load_schema, registry=registry).validate(load.to_dict())
+        Draft202012Validator(self.audit_schema, registry=registry).validate(audit)
+        self.assertEqual(audit["status"], "sufficient")
+
+        measured = MeasuredGroupProfile(
+            profile_id="schema-profile",
+            recipe_variant_fingerprint_version=RECIPE_VARIANT_FINGERPRINT_VERSION,
+            recipe_variant_fingerprint=recipe.variant_fingerprint,
+            context_tokens=load.context_tokens,
+            requests_per_second=5,
+            ttft_ms=100,
+            latency_percentile=99,
+            evidence=(
+                EvidenceRecord(
+                    evidence_id="schema-measurement",
+                    kind=EvidenceKind.MEASURED,
+                    source="benchmark://schema-measurement",
+                    scope="exact recipe fingerprint at the recorded operating point",
+                    metrics={
+                        "recipe_variant_fingerprint_version": RECIPE_VARIANT_FINGERPRINT_VERSION,
+                        "recipe_variant_fingerprint": recipe.variant_fingerprint,
+                        "context_tokens": load.context_tokens,
+                        "input_tokens_per_request": 0,
+                        "output_tokens_per_request": 0,
+                        "requests_per_second": 5,
+                        "ttft_ms": 100,
+                        "latency_percentile": 99,
+                    },
+                ),
+            ),
+        )
+        measured_load = replace(
+            load,
+            request_rate_per_second=4,
+            target_ttft_ms=150,
+            target_latency_percentile=99,
+            measured_profile=measured,
+        )
+        measured_audit = audit_recipe(recipe, measured_load).to_dict()
+        Draft202012Validator(self.load_schema, registry=registry).validate(measured_load.to_dict())
+        Draft202012Validator(self.audit_schema, registry=registry).validate(measured_audit)
 
     def test_generated_contract_and_recommendation_validate(self) -> None:
         contract = capacity_for(

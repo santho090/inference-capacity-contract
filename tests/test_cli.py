@@ -135,6 +135,27 @@ class CliTests(unittest.TestCase):
             self.assertEqual(scaled.returncode, 0, scaled.stderr)
             self.assertGreaterEqual(json.loads(scaled.stdout)["recommended_replicas"], 1)
 
+            audited = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "inference_capacity_contract",
+                    "audit",
+                    "--recipe",
+                    str(ROOT / "docs" / "fixtures" / "serving-recipe-hybrid-tp8.json"),
+                    "--load",
+                    str(ROOT / "docs" / "fixtures" / "load-context-concurrency.json"),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(audited.returncode, 0, audited.stderr)
+            audit_document = json.loads(audited.stdout)
+            self.assertEqual(audit_document["status"], "sufficient")
+            self.assertEqual(audit_document["required_devices"], 16)
+
 
 if __name__ == "__main__":
     unittest.main()

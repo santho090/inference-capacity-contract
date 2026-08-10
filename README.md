@@ -15,7 +15,10 @@ The result is a versioned JSON contract with:
 - assumptions, warnings, a validation level, and evidence sources;
 - reverse-fit results across a hardware inventory;
 - llm-d planner and scaling-policy payloads; and
-- measured-profile replica recommendations with cost and GPU-hour deltas.
+- measured-profile replica recommendations with cost and GPU-hour deltas;
+- TP, DP, and EP serving recipe checks; and
+- a direct answer for whether a configured recipe can handle the requested
+  context and load.
 
 The library does not start vLLM or SGLang, discover GPUs, mutate a cluster, or
 claim throughput and latency from model parameters. Runtime initialization and
@@ -108,6 +111,10 @@ icc scale \
   --contract contract.json \
   --profile docs/fixtures/workload-profile.json
 
+icc audit \
+  --recipe docs/fixtures/serving-recipe-hybrid-tp8.json \
+  --load docs/fixtures/load-context-concurrency.json
+
 icc export \
   --contract contract.json \
   --target llmd-planner
@@ -115,6 +122,62 @@ icc export \
 
 `fit` checks every hardware and runtime pair. If a pair is unsupported, the
 result includes `unsupported_reason` and the search continues.
+
+## Audit an existing serving recipe
+
+`audit_recipe` accepts a normalized serving recipe and a load requirement. A
+recipe describes one serving group: its model, host, vLLM or SGLang settings,
+TP/DP/EP layout, independent KV ranks, llm-d limits, and current group count.
+The library computes a SHA-256 fingerprint over that variant. It excludes the
+recipe name, configured group count, evidence, and device price. None of those
+changes per-group performance, so one measured profile can be reused while
+exploring group count or cost.
+Runtime notes and vendor-support metadata are also excluded. Numeric fields are
+canonicalized before hashing.
+The fingerprint preimage is versioned as `serving-recipe-variant-1.0`.
+
+The audit checks:
+
+- whether weights, reserves, and KV cache fit on each KV rank;
+- how many sequences fit at the requested context;
+- how DP ranks combine into group capacity;
+- whether llm-d and the runtime agree on block size, flow-control tokens, and
+  concurrency; and
+- how many groups and devices the requested load needs.
+
+The result also reports the configured device count and any additional groups
+or devices needed. Those shortfall fields are `null` when measurements are
+missing, because the library does not have enough information to size the load.
+
+The status is `sufficient` when the configured group count covers every known
+driver. It is `insufficient` when the load or latency target fails,
+`incomplete` when a traffic or latency input has no matching measurement, and
+`invalid` when the configuration contradicts the memory or routing math.
+
+Context and concurrency can be checked analytically. RPS, prefill TPS, decode
+TPS, TTFT, and TPOT need measurements from the exact model, runtime, and
+hardware combination. The library returns `incomplete` instead of inventing a
+throughput estimate.
+
+Measurements live in `MeasuredGroupProfile`. The profile records the recipe
+fingerprint, context, request shape, per-group traffic capacity, concurrency,
+and observed latency. One measured evidence record must carry the same
+fingerprint, context, request shape, traffic/concurrency point, and latency
+values. This prevents a low-load latency run from being combined with an
+unrelated high-throughput run. A profile from a different recipe or workload
+shape makes the audit `invalid`.
+
+Traffic may be given as RPS plus tokens per request, or as direct prefill and
+decode TPS. If both forms are present, they must agree.
+
+`context_tokens` means peak active tokens per sequence, including prompt tokens
+and the allowed generated tokens. TTFT and TPOT comparisons also require the
+same percentile in the load and measured profile.
+
+Pipeline parallelism and prefill/decode disaggregation are not represented in
+`serving-recipe-1.0`. Normalize only TP/DP/EP serving groups with one shared
+capacity pool. Adapters must reject other topologies until the schema models
+them explicitly.
 
 ## Memory and KV calculation
 
@@ -198,6 +261,13 @@ The historical 1.0 schema remains in `schemas/` for reference. New documents
 must use `schemas/capacity-contract-2.0.schema.json` and scaling recommendations
 use `schemas/scaling-recommendation-2.0.schema.json`.
 
+Version `0.3.0` adds these independent schemas without changing the 2.0
+capacity contract:
+
+- `serving-recipe-1.0`;
+- `load-requirement-1.0`; and
+- `recipe-audit-1.0`.
+
 These schemas describe normalized output documents produced by `to_dict()`.
 CLI input files may omit nullable/defaulted fields; the dependency-free Python
 parsers enforce their input contracts directly.
@@ -208,9 +278,9 @@ The next milestone expands the library into a single-model planner:
 
 1. resolve pinned Hugging Face artifacts and exact tensor bytes;
 2. accept normalized user-supplied provider inventories;
-3. expose `explore` for supply-to-capacity and `plan` for demand-to-supply;
+3. compare and rank recipes across those providers;
 4. import measured vLLM profiles for RPS/TPS/TTFT/TPOT planning; and
-5. later add SGLang and a separate multi-model portfolio planner.
+5. later add live catalogs and a separate multi-model portfolio planner.
 
 No HTTP service or autoscaler integration precedes a validated library contract.
 See `docs/roadmap.md`.

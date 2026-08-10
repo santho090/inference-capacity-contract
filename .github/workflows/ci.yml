@@ -44,3 +44,7 @@ jobs:
             --runtime docs/fixtures/runtime-vllm.json \
             --output /tmp/icc-contract.json
           /tmp/icc-venv/bin/icc validate --contract /tmp/icc-contract.json
+          /tmp/icc-venv/bin/icc audit \
+            --recipe docs/fixtures/serving-recipe-hybrid-tp8.json \
+            --load docs/fixtures/load-context-concurrency.json \
+            --output /tmp/icc-audit.json

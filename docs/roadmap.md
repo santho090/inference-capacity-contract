@@ -16,6 +16,19 @@ autoscaler adapters should call it instead of reimplementing its rules.
 This phase is done when source-tree and installed-wheel checks pass on Python
 3.12 and 3.13.
 
+## Phase 0.5: audit an existing deployment recipe
+
+- normalize model, host, runtime, TP/DP/EP topology, and llm-d settings;
+- calculate context-specific group capacity across independent KV ranks;
+- check llm-d flow-control, concurrency, and block settings;
+- accept direct RPS or TPS demand;
+- bind measured traffic and latency to an exact recipe fingerprint and
+  operating point; and
+- report required groups, required devices, issues, and missing evidence.
+
+This phase is done when sanitized TP and DP/EP recipes pass library, CLI,
+schema, source-tree, and installed-wheel tests.
+
 ## Phase 1: model resolution and quantized artifacts
 
 - resolve Hugging Face references to immutable revisions;
@@ -34,6 +47,7 @@ to pinned manifests that can be replayed offline.
 - expose `explore` and `plan` over the same candidate evaluator;
 - return ranked plans, rejected-candidate reasons, uncertainty, and resource
   claims; and
+- reuse the recipe auditor for every proposed candidate; and
 - property-test monotonicity and forward/reverse consistency.
 
 This phase is done when one resolved model can be checked against multiple
