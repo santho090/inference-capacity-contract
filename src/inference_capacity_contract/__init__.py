@@ -1,10 +1,10 @@
 """Portable, deterministic capacity contracts for LLM inference."""
 
-from .calculator import capacity_for, what_fits
 from .adapters import to_llmd_planner_payload, to_scaling_policy_input
-from .scaling import ScalingRecommendation, recommend_scale
+from .calculator import capacity_for, what_fits
 from .models import (
     CapacityContract,
+    ConcurrencyPoint,
     ContractError,
     EvidenceKind,
     EvidenceRecord,
@@ -15,9 +15,22 @@ from .models import (
     ValidationLevel,
     WorkloadProfile,
 )
+from .recipe import (
+    RECIPE_VARIANT_FINGERPRINT_VERSION,
+    AuditStatus,
+    LLMDRoutingSpec,
+    LoadRequirement,
+    MeasuredGroupProfile,
+    ParallelTopology,
+    RecipeAudit,
+    ServingRecipe,
+    audit_recipe,
+)
+from .scaling import ScalingRecommendation, recommend_scale
 
 __all__ = [
     "CapacityContract",
+    "ConcurrencyPoint",
     "ContractError",
     "EvidenceKind",
     "EvidenceRecord",
@@ -33,4 +46,13 @@ __all__ = [
     "ScalingRecommendation",
     "WorkloadProfile",
     "recommend_scale",
+    "AuditStatus",
+    "LLMDRoutingSpec",
+    "LoadRequirement",
+    "MeasuredGroupProfile",
+    "ParallelTopology",
+    "RecipeAudit",
+    "RECIPE_VARIANT_FINGERPRINT_VERSION",
+    "ServingRecipe",
+    "audit_recipe",
 ]

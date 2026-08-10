@@ -11,6 +11,7 @@
   "sustainable_requests_per_replica_per_second": 10.0,
   "sustainable_prefill_tokens_per_replica_per_second": 1000.0,
   "sustainable_decode_tokens_per_replica_per_second": 800.0,
+  "sustainable_concurrent_sequences_per_replica": null,
   "target_utilization": 0.7,
   "scale_up_buffer": 1.15,
   "min_replicas": 1,

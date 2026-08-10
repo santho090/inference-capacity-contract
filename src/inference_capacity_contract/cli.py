@@ -11,6 +11,7 @@ from typing import Any
 from .adapters import to_llmd_planner_payload, to_scaling_policy_input
 from .calculator import capacity_for, what_fits
 from .models import CapacityContract, HardwareInventory, HardwareSpec, ModelSpec, RuntimeVariant, WorkloadProfile
+from .recipe import LoadRequirement, ServingRecipe, audit_recipe
 from .scaling import recommend_scale
 
 
@@ -59,6 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
     scale.add_argument("--contract", required=True)
     scale.add_argument("--profile", required=True)
     scale.add_argument("--output")
+
+    audit = sub.add_parser("audit", help="audit a normalized serving recipe against a requested load")
+    audit.add_argument("--recipe", required=True)
+    audit.add_argument("--load", required=True)
+    audit.add_argument("--output")
     return parser
 
 
@@ -66,13 +72,23 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "plan":
-            result = capacity_for(ModelSpec.from_dict(_read(args.model)), HardwareSpec.from_dict(_read(args.hardware)), RuntimeVariant.from_dict(_read(args.runtime)))
+            result = capacity_for(
+                ModelSpec.from_dict(_read(args.model)),
+                HardwareSpec.from_dict(_read(args.hardware)),
+                RuntimeVariant.from_dict(_read(args.runtime)),
+            )
             _write(result.to_dict(), args.output)
         elif args.command == "fit":
             model = ModelSpec.from_dict(_read(args.model))
             inventory = HardwareInventory.from_dict(_read(args.inventory))
             runtime = RuntimeVariant.from_dict(_read(args.runtime))
-            _write({"schema_version": "capacity-contract-fit-1.0", "candidates": [item.to_dict() for item in what_fits(model, inventory, runtime)]}, args.output)
+            _write(
+                {
+                    "schema_version": "capacity-contract-fit-2.0",
+                    "candidates": [item.to_dict() for item in what_fits(model, inventory, runtime)],
+                },
+                args.output,
+            )
         elif args.command == "validate":
             contract = CapacityContract.from_dict(_read(args.contract))
             _write(contract.to_dict(), args.output)
@@ -80,10 +96,14 @@ def main(argv: list[str] | None = None) -> int:
             contract = CapacityContract.from_dict(_read(args.contract))
             exporter = to_llmd_planner_payload if args.target == "llmd-planner" else to_scaling_policy_input
             _write(exporter(contract), args.output)
-        else:
+        elif args.command == "scale":
             contract = CapacityContract.from_dict(_read(args.contract))
             profile = WorkloadProfile.from_dict(_read(args.profile))
             _write(recommend_scale(contract, profile).to_dict(), args.output)
+        else:
+            recipe = ServingRecipe.from_dict(_read(args.recipe))
+            load = LoadRequirement.from_dict(_read(args.load))
+            _write(audit_recipe(recipe, load).to_dict(), args.output)
         return 0
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         print(f"icc: error: {exc}", file=sys.stderr)

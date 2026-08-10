@@ -1,4 +1,4 @@
-"""Evidence-backed, non-actuating autoscale recommendations."""
+"""Build replica recommendations from measured workload data."""
 
 from __future__ import annotations
 
@@ -9,7 +9,11 @@ from typing import Any
 from .models import CapacityContract, ContractError, EvidenceKind, WorkloadProfile
 
 
-def _required(demand: float, capacity: float | None, target_utilization: float) -> int | None:
+def _required(
+    demand: float,
+    capacity: float | None,
+    target_utilization: float,
+) -> int | None:
     if demand <= 0:
         return 0
     if capacity is None or capacity <= 0:
@@ -19,7 +23,7 @@ def _required(demand: float, capacity: float | None, target_utilization: float) 
 
 @dataclass(frozen=True, slots=True)
 class ScalingRecommendation:
-    """A transparent replica recommendation derived from a measured profile."""
+    """A replica recommendation calculated from a measured profile."""
 
     schema_version: str
     contract: CapacityContract
@@ -29,6 +33,8 @@ class ScalingRecommendation:
     drivers: dict[str, int]
     constrained_by: str
     within_bounds: bool
+    estimated_gpu_hours_per_hour: float
+    estimated_gpu_hour_savings_vs_baseline: float | None
     estimated_hourly_cost: float | None
     estimated_hourly_savings_vs_baseline: float | None
     suggestions: tuple[str, ...]
@@ -44,8 +50,10 @@ class ScalingRecommendation:
             "drivers": dict(self.drivers),
             "constrained_by": self.constrained_by,
             "within_bounds": self.within_bounds,
+            "estimated_gpu_hours_per_hour": self.estimated_gpu_hours_per_hour,
+            "estimated_gpu_hour_savings_vs_baseline": (self.estimated_gpu_hour_savings_vs_baseline),
             "estimated_hourly_cost": self.estimated_hourly_cost,
-            "estimated_hourly_savings_vs_baseline": self.estimated_hourly_savings_vs_baseline,
+            "estimated_hourly_savings_vs_baseline": (self.estimated_hourly_savings_vs_baseline),
             "suggestions": list(self.suggestions),
             "warnings": list(self.warnings),
         }
@@ -54,9 +62,9 @@ class ScalingRecommendation:
 def recommend_scale(contract: CapacityContract, profile: WorkloadProfile) -> ScalingRecommendation:
     """Calculate a measured-profile replica recommendation.
 
-    The function refuses to produce a recommendation from static memory fit
-    alone. At least one measured evidence record and a scope match are required.
-    The returned value is a plan input, not a Kubernetes or cloud action.
+    Static memory fit alone is not enough. The profile must have a measured
+    evidence record and must match the contract's identity. The result is a
+    planning input and does not change Kubernetes or cloud resources.
     """
 
     if not contract.fits:
@@ -83,15 +91,33 @@ def recommend_scale(contract: CapacityContract, profile: WorkloadProfile) -> Sca
     drivers: dict[str, int] = {}
     unmeasured_drivers: list[str] = []
     for name, value in demand.items():
+        if value <= 0:
+            continue
         required = _required(value, capacities[name], profile.target_utilization)
         if required is not None:
             drivers[name] = required
-        elif value > 0:
+        else:
             unmeasured_drivers.append(name)
     if profile.peak_concurrent_sequences is not None:
+        if profile.concurrency_context_tokens is None:
+            raise ContractError("concurrency_context_tokens is required with peak_concurrent_sequences")
+        if profile.sustainable_concurrent_sequences_per_replica is None:
+            raise ContractError(
+                "sustainable_concurrent_sequences_per_replica is required with peak_concurrent_sequences"
+            )
+        if profile.concurrency_context_tokens > contract.max_context_tokens:
+            raise ContractError(
+                "concurrency_context_tokens exceeds the contract's supported context; "
+                "choose another candidate or reduce the context requirement"
+            )
+        analytical_concurrency_limit = contract.max_sequences_at(profile.concurrency_context_tokens)
+        sustainable_concurrency = min(
+            profile.sustainable_concurrent_sequences_per_replica,
+            analytical_concurrency_limit,
+        )
         concurrency_required = _required(
             profile.peak_concurrent_sequences,
-            float(contract.max_concurrent_sequences),
+            float(sustainable_concurrency),
             profile.target_utilization,
         )
         if concurrency_required is None:
@@ -110,10 +136,22 @@ def recommend_scale(contract: CapacityContract, profile: WorkloadProfile) -> Sca
     if unmeasured_drivers:
         warnings.extend(f"{name} demand has no measured per-replica capacity" for name in unmeasured_drivers)
         warnings.append("recommendation is incomplete until every non-zero demand driver is measured")
+    if (
+        profile.peak_concurrent_sequences is not None
+        and profile.sustainable_concurrent_sequences_per_replica is not None
+        and profile.concurrency_context_tokens is not None
+        and profile.sustainable_concurrent_sequences_per_replica
+        > contract.max_sequences_at(profile.concurrency_context_tokens)
+    ):
+        warnings.append("measured concurrency exceeds the analytical KV bound; the analytical bound was used")
     if not within_bounds:
-        warnings.append("recommended replica count cannot satisfy the measured demand within configured bounds")
-    constrained_by = max(drivers, key=drivers.get) if drivers else "unmeasured-capacity"
+        warnings.append("recommended replica count cannot satisfy measured demand within configured bounds")
+    constrained_by = max(drivers.items(), key=lambda item: item[1])[0] if drivers else "min-replicas-floor"
 
+    gpu_hours = float(recommended * contract.hardware.device_count)
+    gpu_hour_savings = None
+    if profile.baseline_replicas is not None:
+        gpu_hour_savings = float((profile.baseline_replicas - recommended) * contract.hardware.device_count)
     cost_per_replica_hour: float | None = None
     if contract.hardware.price_per_device_hour is not None:
         cost_per_replica_hour = contract.hardware.price_per_device_hour * contract.hardware.device_count
@@ -122,19 +160,26 @@ def recommend_scale(contract: CapacityContract, profile: WorkloadProfile) -> Sca
     if profile.baseline_replicas is not None and cost_per_replica_hour is not None:
         savings = (profile.baseline_replicas - recommended) * cost_per_replica_hour
     if cost_per_replica_hour is None:
-        warnings.append("hardware price is unknown; cost and GPU-hour savings are not estimated")
+        warnings.append("hardware price is unknown; hourly cost savings are not estimated")
 
     suggestions: list[str] = []
     if profile.baseline_replicas is not None and recommended < profile.baseline_replicas:
-        suggestions.append(f"test reducing replicas from {profile.baseline_replicas} to {recommended} under the measured profile")
+        suggestions.append(
+            f"test reducing replicas from {profile.baseline_replicas} to {recommended} under the measured profile"
+        )
     elif profile.baseline_replicas is not None and recommended > profile.baseline_replicas:
-        suggestions.append(f"test increasing replicas from {profile.baseline_replicas} to {recommended} before accepting queue growth")
+        suggestions.append(
+            f"test increasing replicas from {profile.baseline_replicas} to {recommended} before accepting queue growth"
+        )
     else:
         suggestions.append("use the recommendation as a policy input and validate it against a live canary")
-    suggestions.append(f"collect a new measured profile when the {constrained_by} driver changes materially")
+    if drivers:
+        suggestions.append(f"collect a new measured profile when the {constrained_by} driver changes materially")
+    else:
+        suggestions.append("review min_replicas before reducing the idle floor")
 
     return ScalingRecommendation(
-        schema_version="scaling-recommendation-1.0",
+        schema_version="scaling-recommendation-2.0",
         contract=contract,
         profile=profile,
         required_replicas=required_replicas,
@@ -142,6 +187,8 @@ def recommend_scale(contract: CapacityContract, profile: WorkloadProfile) -> Sca
         drivers=drivers,
         constrained_by=constrained_by,
         within_bounds=within_bounds,
+        estimated_gpu_hours_per_hour=gpu_hours,
+        estimated_gpu_hour_savings_vs_baseline=gpu_hour_savings,
         estimated_hourly_cost=estimated_cost,
         estimated_hourly_savings_vs_baseline=savings,
         suggestions=tuple(suggestions),

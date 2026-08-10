@@ -2,7 +2,7 @@
 
 Contributions must preserve the contract boundaries:
 
-- Keep calculations deterministic and unit-labelled.
+- Keep calculations deterministic and state the unit for every value.
 - Attach provenance and validity bounds to every derived quantity.
 - Treat unsupported architectures and missing evidence explicitly; do not
   silently infer compatibility.
@@ -13,7 +13,12 @@ Contributions must preserve the contract boundaries:
 Before opening a pull request:
 
 ```bash
+python -m pip install -e '.[dev]'
+python -m ruff check .
+python -m ruff format --check .
+python -m mypy
 python -m unittest discover -s tests -v
-python -m compileall -q src tests build_backend.py
-python -m pip wheel --no-deps --no-build-isolation --wheel-dir /tmp/icc-dist .
+python -m compileall -q src tests
+PIP_NO_INDEX=1 python -m pip wheel --no-deps --no-build-isolation \
+  --wheel-dir /tmp/icc-dist .
 ```

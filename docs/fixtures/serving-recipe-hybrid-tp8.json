@@ -1,0 +1,67 @@
+{
+  "schema_version": "serving-recipe-1.0",
+  "recipe_id": "example-hybrid-tp8",
+  "model": {
+    "model_id": "example/custom-hybrid",
+    "revision": "sha256:example",
+    "parameter_count": 1,
+    "num_layers": 1,
+    "num_kv_heads": 1,
+    "head_dim": 1,
+    "weight_dtype": "unknown",
+    "max_model_len": 1048576,
+    "explicit_weight_bytes": 1374389534720,
+    "attention_type": "custom",
+    "kv_bytes_per_token_per_device_override": 1024,
+    "architecture": "example-hybrid"
+  },
+  "host": {
+    "hardware_id": "example-accelerator-288gb-x8",
+    "vendor": "nvidia",
+    "device_count": 8,
+    "memory_bytes_per_device": 309237645312,
+    "memory_utilization_limit": 0.96,
+    "price_per_device_hour": null,
+    "interconnect": "high-bandwidth-fabric"
+  },
+  "runtime": {
+    "engine": "vllm",
+    "version": "example-pinned-build",
+    "tensor_parallel_size": 8,
+    "kv_cache_dtype": "fp8",
+    "kv_heads_per_device": 1,
+    "weight_bytes_per_device_override": 171798691840,
+    "runtime_overhead_bytes_per_device": 8589934592,
+    "activation_reserve_bytes_per_device": 8589934592,
+    "max_num_seqs": 24,
+    "block_size_tokens": 256,
+    "supported_vendors": ["nvidia"],
+    "notes": ["Sanitized example; replace every reported override with facts from the exact deployment."]
+  },
+  "topology": {
+    "tensor_parallel_size": 8,
+    "data_parallel_size": 1,
+    "expert_parallel_size": 8,
+    "physical_device_count": 8,
+    "independent_kv_ranks": 1
+  },
+  "llmd": {
+    "flow_control_token_limit": 1000000,
+    "max_concurrent_sequences": 24,
+    "kv_block_size_tokens": 256,
+    "output_ratio": 0.2,
+    "max_estimated_output_tokens": 500,
+    "precise_prefix_routing": true
+  },
+  "configured_groups": 2,
+  "evidence": [
+    {
+      "evidence_id": "example-recipe-source",
+      "kind": "reported",
+      "source": "fixture://serving-recipe-hybrid-tp8",
+      "scope": "sanitized model, runtime, topology, and host shape",
+      "metrics": {},
+      "collected_at": null
+    }
+  ]
+}

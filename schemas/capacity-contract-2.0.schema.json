@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json",
+  "title": "Inference Capacity Contract 2.0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "model",
+    "hardware",
+    "runtime",
+    "fits",
+    "validation_level",
+    "memory_bytes_per_device",
+    "kv_bytes_per_token_per_device",
+    "kv_block_size_tokens",
+    "kv_capacity_blocks_per_device",
+    "kv_capacity_tokens_per_device",
+    "max_context_tokens",
+    "concurrency_envelope",
+    "assumptions",
+    "warnings",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {"const": "capacity-contract-2.0"},
+    "model": {"$ref": "#/$defs/model"},
+    "hardware": {"$ref": "#/$defs/hardware"},
+    "runtime": {"$ref": "#/$defs/runtime"},
+    "fits": {"type": "boolean"},
+    "validation_level": {
+      "enum": [
+        "analytically-feasible",
+        "runtime-supported",
+        "initialization-validated",
+        "slo-validated"
+      ]
+    },
+    "memory_bytes_per_device": {"$ref": "#/$defs/memory"},
+    "kv_bytes_per_token_per_device": {"type": "integer", "minimum": 1},
+    "kv_block_size_tokens": {"type": "integer", "minimum": 1},
+    "kv_capacity_blocks_per_device": {"type": "integer", "minimum": 0},
+    "kv_capacity_tokens_per_device": {"type": "integer", "minimum": 0},
+    "max_context_tokens": {"type": "integer", "minimum": 0},
+    "concurrency_envelope": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/concurrency_point"}
+    },
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/evidence"}
+    }
+  },
+  "$defs": {
+    "model": {
+      "type": "object",
+      "required": [
+        "model_id",
+        "revision",
+        "parameter_count",
+        "num_layers",
+        "num_kv_heads",
+        "head_dim",
+        "weight_dtype",
+        "max_model_len",
+        "explicit_weight_bytes",
+        "attention_type",
+        "kv_bytes_per_token_per_device_override",
+        "architecture"
+      ],
+      "properties": {
+        "model_id": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1},
+        "parameter_count": {"type": "integer", "minimum": 1},
+        "num_layers": {"type": "integer", "minimum": 1},
+        "num_kv_heads": {"type": "integer", "minimum": 1},
+        "head_dim": {"type": "integer", "minimum": 1},
+        "weight_dtype": {"type": "string", "minLength": 1},
+        "max_model_len": {"type": ["integer", "null"], "minimum": 1},
+        "explicit_weight_bytes": {"type": ["integer", "null"], "minimum": 1},
+        "attention_type": {"enum": ["mha", "gqa", "mqa", "mla", "hybrid", "custom"]},
+        "kv_bytes_per_token_per_device_override": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "architecture": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "hardware": {
+      "type": "object",
+      "required": [
+        "hardware_id",
+        "vendor",
+        "device_count",
+        "memory_bytes_per_device",
+        "memory_utilization_limit",
+        "price_per_device_hour",
+        "interconnect"
+      ],
+      "properties": {
+        "hardware_id": {"type": "string", "minLength": 1},
+        "vendor": {"type": "string", "minLength": 1},
+        "device_count": {"type": "integer", "minimum": 1},
+        "memory_bytes_per_device": {"type": "integer", "minimum": 1},
+        "memory_utilization_limit": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "price_per_device_hour": {"type": ["number", "null"], "minimum": 0},
+        "interconnect": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "engine",
+        "version",
+        "tensor_parallel_size",
+        "kv_cache_dtype",
+        "kv_heads_per_device",
+        "weight_bytes_per_device_override",
+        "runtime_overhead_bytes_per_device",
+        "activation_reserve_bytes_per_device",
+        "max_num_seqs",
+        "block_size_tokens",
+        "supported_vendors",
+        "notes"
+      ],
+      "properties": {
+        "engine": {"enum": ["vllm", "sglang", "other"]},
+        "version": {"type": "string", "minLength": 1},
+        "tensor_parallel_size": {"type": "integer", "minimum": 1},
+        "kv_cache_dtype": {"enum": ["bf16", "fp16", "fp8", "int8", "int4"]},
+        "kv_heads_per_device": {"type": ["integer", "null"], "minimum": 1},
+        "weight_bytes_per_device_override": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "runtime_overhead_bytes_per_device": {"type": "integer", "minimum": 0},
+        "activation_reserve_bytes_per_device": {"type": "integer", "minimum": 0},
+        "max_num_seqs": {"type": ["integer", "null"], "minimum": 1},
+        "block_size_tokens": {"type": "integer", "minimum": 1},
+        "supported_vendors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "notes": {"type": "array", "items": {"type": "string"}}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"tensor_parallel_size": {"minimum": 2}},
+            "required": ["tensor_parallel_size"]
+          },
+          "then": {
+            "properties": {"kv_heads_per_device": {"type": "integer", "minimum": 1}}
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "memory": {
+      "type": "object",
+      "required": [
+        "usable_budget",
+        "weights",
+        "runtime_reserve",
+        "activation_reserve",
+        "kv_available"
+      ],
+      "properties": {
+        "usable_budget": {"type": "integer", "minimum": 0},
+        "weights": {"type": "integer", "minimum": 0},
+        "runtime_reserve": {"type": "integer", "minimum": 0},
+        "activation_reserve": {"type": "integer", "minimum": 0},
+        "kv_available": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "concurrency_point": {
+      "type": "object",
+      "required": ["context_tokens", "blocks_per_sequence", "max_sequences"],
+      "properties": {
+        "context_tokens": {"type": "integer", "minimum": 1},
+        "blocks_per_sequence": {"type": "integer", "minimum": 1},
+        "max_sequences": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["evidence_id", "kind", "source", "scope", "metrics", "collected_at"],
+      "properties": {
+        "evidence_id": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["analytical", "measured", "reported", "extrapolated"]},
+        "source": {"type": "string", "minLength": 1},
+        "scope": {"type": "string", "minLength": 1},
+        "metrics": {
+          "type": "object",
+          "additionalProperties": {"type": ["number", "string"]}
+        },
+        "collected_at": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

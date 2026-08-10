@@ -1,48 +1,80 @@
 # Roadmap and adoption gates
 
-The launch wedge is a portable capacity contract, not a universal inference control plane.
+Keep the calculations and contracts in the standalone library. Services and
+autoscaler adapters should call it instead of reimplementing its rules.
 
-## Phase 0: public core (current)
+## Phase 0: correctness and OSS hygiene
 
-Ship the dependency-free contract, deterministic memory/KV calculation, reverse-fit query, JSON schema, fixtures, and non-actuating planner/scaling exports.
+- replace scalar concurrency with a KV/context envelope;
+- make tensor-parallel KV layout explicit;
+- return candidate-specific incompatibilities as data;
+- ship a working installed `icc` command;
+- enforce tests, Ruff, mypy, and schema validation in CI;
+- tighten the 2.0 schemas; and
+- align README and security guidance with repository behavior.
 
-Exit criteria:
+This phase is done when source-tree and installed-wheel checks pass on Python
+3.12 and 3.13.
 
-- source tests and installed-wheel smoke tests pass;
-- NVIDIA and AMD fixtures exercise both supported vendors;
-- unsupported topology, unsupported vendor, unknown context, and custom-attention cases are explicit;
-- every derived value carries assumptions or warnings; and
-- no private catalog, credential, cluster client, or deployment mutation exists in the default package.
+## Phase 0.5: audit an existing deployment recipe
 
-## Phase 1: measured profile import (experimental implementation included)
+- normalize model, host, runtime, TP/DP/EP topology, and llm-d settings;
+- calculate context-specific group capacity across independent KV ranks;
+- check llm-d flow-control, concurrency, and block settings;
+- accept direct RPS or TPS demand;
+- bind measured traffic and latency to an exact recipe fingerprint and
+  operating point; and
+- report required groups, required devices, issues, and missing evidence.
 
-The current package includes a first rate-based `WorkloadProfile` and `scaling-recommendation-1.0` calculator. Extend it with a versioned workload document containing request-rate, prompt/output distributions, concurrency, queue, TTFT/TPOT/E2E percentiles, KV occupancy, readiness time, and failure boundaries. Import benchmark results as `EvidenceRecord` values without changing the analytical calculator.
+This phase is done when sanitized TP and DP/EP recipes pass library, CLI,
+schema, source-tree, and installed-wheel tests.
 
-Exit criteria:
+## Phase 1: model resolution and quantized artifacts
 
-- a profile is reproducible from a pinned model revision, runtime version, hardware topology, and workload seed;
-- analytical prediction error is reported rather than hidden; and
-- initialization and SLO validation levels are granted only by explicit validation workflows.
+- resolve Hugging Face references to immutable revisions;
+- parse config and SafeTensors metadata without downloading full weights;
+- cache normalized manifests for offline use;
+- calculate actual resident bytes for real quantized artifacts; and
+- attach field-level provenance.
 
-## Phase 2: upstream adapter
+This phase is done when one public model and one real quantized artifact resolve
+to pinned manifests that can be replayed offline.
 
-Implement one adapter against a pinned llm-d planner contract. Keep the core schema independent from upstream release churn and test the translation in an integration fixture. Add a second consumer adapter for a workload-aware WVA/KEDA/HPA policy input; it may calculate replicas only when measured throughput/latency evidence is present.
+## Phase 2: single-model analytical solver
 
-Exit criteria:
+- accept normalized user-supplied provider inventories;
+- add a versioned vLLM runtime adapter;
+- expose `explore` and `plan` over the same candidate evaluator;
+- return ranked plans, rejected-candidate reasons, uncertainty, and resource
+  claims; and
+- reuse the recipe auditor for every proposed candidate; and
+- property-test monotonicity and forward/reverse consistency.
 
-- one producer and two consumer adapters exist;
-- warnings and validation levels survive every translation;
-- no adapter emits deployment actions as a side effect; and
-- upstream compatibility is tested against a pinned version.
+This phase is done when one resolved model can be checked against multiple
+providers without a measured performance profile. Every result must say whether
+it is analytical or estimated.
 
-## Phase 3: cost and fleet extensions
+## Phase 3: measured SLO planning
 
-Add private, separately versioned adapters for GPU discovery, price catalogs, fleet availability, and organization policy. Keep these out of the public core. Cost-saving suggestions should be expressed as ranked, evidence-backed alternatives with a stated confidence interval and a rollback path.
+- define operating-point performance profiles;
+- import `vllm bench serve` results;
+- match exact model/runtime/hardware/quantization variants;
+- filter by RPS/TPS/TTFT/TPOT/E2E constraints; and
+- publish prediction-error and initialization-validation tables.
 
-## Standalone-repository gate
+This phase is done when the planner can solve the same measured workload from
+either direction and return consistent capacity and SLO results.
 
-Treat the schema as stable only after at least two independent consumers use it, NVIDIA and AMD paths have validation runs, and the project publishes prediction-error and failure cases. Until then, breaking schema changes are acceptable when they remove ambiguity or false precision.
+## Later phases
 
-## Explicit non-goals
+- SGLang runtime adapter;
+- live provider catalog importers;
+- multi-model `plan_portfolio` placement and allocation;
+- optional HTTP service; and
+- shadow/autoscaler integrations after recommendation error is known.
 
-Do not add live autoscaling, queue admission, deployment generation, GPU probing, or model downloading until Phase 1 establishes the workload evidence required to make those actions falsifiable.
+## Stability gate
+
+Do not call the schema stable until at least two independent consumers use it,
+NVIDIA and AMD paths have real validation runs, and the project publishes its
+prediction errors and failure cases.

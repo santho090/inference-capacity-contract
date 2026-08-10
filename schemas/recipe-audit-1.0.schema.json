@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santho090.github.io/inference-capacity-contract/schemas/recipe-audit-1.0.schema.json",
+  "title": "Serving Recipe Audit 1.0",
+  "type": "object",
+  "required": [
+    "schema_version", "formula_version", "recipe_variant_fingerprint_version", "recipe_variant_fingerprint", "recipe", "load", "rank_contract", "status", "context_supported",
+    "analytical_sequences_per_kv_rank", "analytical_sequences_per_group", "calculated_kv_tokens_per_group",
+    "calculated_max_concurrent_sequences", "configured_devices", "required_groups", "required_devices",
+    "additional_groups_needed", "additional_devices_needed", "drivers",
+    "configured_load_satisfied", "issues", "warnings", "suggestions"
+  ],
+  "properties": {
+    "schema_version": {"const": "recipe-audit-1.0"},
+    "formula_version": {"const": "recipe-audit-formula-1.0"},
+    "recipe_variant_fingerprint_version": {"const": "serving-recipe-variant-1.0"},
+    "recipe_variant_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "recipe": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/serving-recipe-1.0.schema.json"},
+    "load": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/load-requirement-1.0.schema.json"},
+    "rank_contract": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json"},
+    "status": {"enum": ["sufficient", "insufficient", "incomplete", "invalid"]},
+    "context_supported": {"type": "boolean"},
+    "analytical_sequences_per_kv_rank": {"type": "integer", "minimum": 0},
+    "analytical_sequences_per_group": {"type": "integer", "minimum": 0},
+    "calculated_kv_tokens_per_group": {"type": "integer", "minimum": 0},
+    "calculated_max_concurrent_sequences": {"type": "integer", "minimum": 1},
+    "configured_devices": {"type": "integer", "minimum": 1},
+    "required_groups": {"type": ["integer", "null"], "minimum": 1},
+    "required_devices": {"type": ["integer", "null"], "minimum": 1},
+    "additional_groups_needed": {"type": ["integer", "null"], "minimum": 0},
+    "additional_devices_needed": {"type": ["integer", "null"], "minimum": 0},
+    "drivers": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
+    "configured_load_satisfied": {"type": ["boolean", "null"]},
+    "issues": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "suggestions": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

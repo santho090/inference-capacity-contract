@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santho090.github.io/inference-capacity-contract/schemas/load-requirement-1.0.schema.json",
+  "title": "Load Requirement 1.0",
+  "type": "object",
+  "required": [
+    "schema_version", "context_tokens", "peak_concurrent_sequences", "request_rate_per_second",
+    "input_tokens_per_request", "output_tokens_per_request", "prefill_tokens_per_second",
+    "decode_tokens_per_second", "target_utilization", "target_ttft_ms", "target_tpot_ms",
+    "target_latency_percentile", "measured_profile"
+  ],
+  "properties": {
+    "schema_version": {"const": "load-requirement-1.0"},
+    "context_tokens": {"type": "integer", "minimum": 1},
+    "peak_concurrent_sequences": {"type": "integer", "minimum": 0},
+    "request_rate_per_second": {"type": "number", "minimum": 0},
+    "input_tokens_per_request": {"type": "number", "minimum": 0},
+    "output_tokens_per_request": {"type": "number", "minimum": 0},
+    "prefill_tokens_per_second": {"type": "number", "minimum": 0},
+    "decode_tokens_per_second": {"type": "number", "minimum": 0},
+    "target_utilization": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+    "target_ttft_ms": {"type": ["number", "null"], "exclusiveMinimum": 0},
+    "target_tpot_ms": {"type": ["number", "null"], "exclusiveMinimum": 0},
+    "target_latency_percentile": {"type": ["number", "null"], "exclusiveMinimum": 0, "exclusiveMaximum": 100},
+    "measured_profile": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/measured_group_profile"}]}
+  },
+  "$defs": {
+    "measured_group_profile": {
+      "type": "object",
+      "required": [
+        "profile_id", "recipe_variant_fingerprint_version", "recipe_variant_fingerprint", "context_tokens", "input_tokens_per_request",
+        "output_tokens_per_request", "requests_per_second", "prefill_tokens_per_second",
+        "decode_tokens_per_second", "concurrent_sequences", "ttft_ms", "tpot_ms", "latency_percentile", "evidence"
+      ],
+      "properties": {
+        "profile_id": {"type": "string", "minLength": 1},
+        "recipe_variant_fingerprint_version": {"const": "serving-recipe-variant-1.0"},
+        "recipe_variant_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "context_tokens": {"type": "integer", "minimum": 1},
+        "input_tokens_per_request": {"type": "number", "minimum": 0},
+        "output_tokens_per_request": {"type": "number", "minimum": 0},
+        "requests_per_second": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "prefill_tokens_per_second": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "decode_tokens_per_second": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "concurrent_sequences": {"type": ["integer", "null"], "minimum": 1},
+        "ttft_ms": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "tpot_ms": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "latency_percentile": {"type": ["number", "null"], "exclusiveMinimum": 0, "exclusiveMaximum": 100},
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/evidence"}
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

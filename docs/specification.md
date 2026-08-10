@@ -1,49 +1,162 @@
 # Capacity contract specification
 
-Schema identifier: `capacity-contract-1.0`
+Current schema identifier: `capacity-contract-2.0`
 
-The JSON form is the durable interchange format. Python dataclasses are a convenience layer over the same fields.
+The JSON document is the interchange format. Python dataclasses expose the same
+fields for callers using the library directly.
+
+## Per-replica boundary
+
+A capacity contract describes one tensor-parallel serving replica. Its hardware
+device count must equal the runtime tensor-parallel size. Replica count and data
+parallelism belong to the scaling/planning layer rather than the per-replica
+memory calculation.
 
 ## Inputs
 
 | Object | Required facts | Meaning |
-| --- | --- | --- |
-| `model` | id, immutable revision, parameter count, layer count, KV-head count, head dimension | Architecture and artifact facts. `explicit_weight_bytes` is preferred when the raw parameter count does not describe resident weights. |
-| `hardware` | id, vendor, device count, memory per device | One replica topology, not a whole cluster. |
-| `runtime` | engine, version, tensor/data parallelism, KV dtype | Pinned serving variant. Runtime and activation reserves are explicit inputs. |
+|---|---|---|
+| `model` | immutable ID/revision, parameter count, layers, KV heads, head dimension | One model artifact. Explicit resident bytes override nominal dtype arithmetic. |
+| `hardware` | ID, vendor, device count, memory per device | Devices allocated to one tensor-parallel replica. |
+| `runtime` | engine/version, TP size, KV dtype, block size, reserves | One pinned runtime variant. TP greater than one requires an explicit per-device KV-head layout; exact non-uniform weight layouts use a per-device byte override. |
 
-## Output semantics
+For TP greater than one, `kv_heads_per_device` is the maximum number resident
+on any device. The product of that value and TP size must cover all logical KV
+heads. This permits replication without allowing an under-counted layout.
 
-`fits` is true only when vendor support, device topology, and non-negative memory remainder all hold. It does not mean initialization or SLO success.
+## Memory ledger
 
 `memory_bytes_per_device` contains:
 
 - `usable_budget`: device memory multiplied by the utilization limit;
-- `weights`: resident weight bytes after tensor-parallel division (rounded up);
-- `runtime_reserve`: declared runtime reserve;
+- `weights`: resident weight bytes divided across TP devices and rounded up;
+- `runtime_reserve`: declared non-model runtime reserve;
 - `activation_reserve`: declared activation reserve; and
-- `kv_available`: the remainder available to KV storage.
+- `kv_available`: remaining bytes available to KV blocks.
 
-`remaining_bytes_per_device` equals the non-negative KV remainder. It is not free device memory after a runtime has initialized.
+These are analytical inputs and results. They are not a measurement of a live
+runtime unless matching evidence is attached.
 
-`kv_capacity_tokens` is the integer floor of `kv_available / kv_bytes_per_token`. `max_context_tokens` is additionally capped by `model.max_model_len` when that value is known. `max_concurrent_sequences` is a conservative token-bound divided by runtime block size and capped by `max_num_seqs`, then multiplied by data parallelism.
+## KV and concurrency
 
-`warnings` are actionable uncertainty or incompatibility notices. Consumers should surface them rather than discard them.
+For uniform full self-attention with equal K/V dimensions, the calculator
+derives per-device KV bytes/token from the layers, KV heads resident on that
+device, head dimension, and KV dtype. MLA, hybrid cache groups, unequal K/V
+dimensions, sub-byte formats, and custom attention require an explicit
+per-device override.
 
-`evidence` records provenance; each record has an id, kind, source, scope, optional metrics, and optional collection timestamp.
+```text
+bytes_per_block_per_device
+    = kv_bytes_per_token_per_device × kv_block_size_tokens
 
-## Scaling recommendation semantics
+kv_capacity_blocks_per_device
+    = floor(kv_available / bytes_per_block_per_device)
 
-`scaling-recommendation-1.0` is derived from a capacity contract plus a measured `WorkloadProfile`. The profile must match model revision, hardware id, runtime engine, and runtime version exactly. For each available driver, required replicas are `ceil(demand / (sustainable_per_replica_rate × target_utilization))`. The recommendation is `max(min_replicas, ceil(max_driver × scale_up_buffer))`, capped by `max_replicas` when configured. `within_bounds=false` means the configured maximum cannot satisfy the measured demand.
+blocks_per_sequence(context_tokens)
+    = ceil(context_tokens / kv_block_size_tokens)
 
-The calculation is intentionally rate-based. It does not model queueing, burst distributions, cold-start time, or SLO tails; those belong in the measured profile and a later runtime-specific policy adapter.
+max_sequences_at(context_tokens)
+    = floor(kv_capacity_blocks_per_device / blocks_per_sequence)
+```
 
-## Compatibility rules
+`runtime.max_num_seqs` caps the final value when configured.
 
-The v0 calculator rejects a candidate when:
+`concurrency_envelope` records this function at useful context lengths.
+Consumers may call the Python contract's `max_sequences_at(context_tokens)` for
+another point. The schema has no context-free maximum sequence field because
+the quantity is not a scalar.
 
-1. the hardware vendor is not in the runtime's declared `supported_vendors`;
-2. hardware device count differs from `tensor_parallel_size × data_parallel_size`; or
-3. weights plus declared reserves exceed the usable memory budget.
+These capacities are per device because every TP device stores a shard of the
+same sequences. They are already the replica bottleneck and must not be
+multiplied by `hardware.device_count`.
 
-The calculator does not infer support from a model name, GPU marketing name, or an unpinned runtime version.
+## Compatibility and failure behavior
+
+`fits=true` requires:
+
+1. declared runtime support for the hardware vendor;
+2. hardware device count equal to tensor-parallel size;
+3. a known per-device KV layout for TP greater than one; and
+4. enough usable memory for weights, reserves, and at least one KV block.
+
+`capacity_for` raises `ContractError` for malformed or underspecified direct
+inputs. `what_fits` converts candidate-specific errors into
+`unsupported_reason`, allowing the remaining inventory to be evaluated.
+
+## Scaling recommendation
+
+`scaling-recommendation-2.0` requires a measured `WorkloadProfile` matching the
+model revision, hardware ID, runtime engine, and runtime version. Each rate
+driver uses:
+
+```text
+ceil(demand / (measured per-replica capacity × target utilization))
+```
+
+The maximum driver is buffered and bounded by configured min/max replicas.
+Peak concurrency also requires `concurrency_context_tokens` and a
+measured `sustainable_concurrent_sequences_per_replica`. The solver uses the
+lower of that measurement and the contract's context-specific analytical KV
+bound.
+
+The recommendation reports replica count, GPU-hours per hour, and GPU-hour
+delta. When a price is available, it also reports hourly cost and cost delta.
+The result is a policy input, not an actuation command.
+
+## Serving recipe audit
+
+`serving-recipe-1.0` adds the host-level topology that a per-replica contract
+does not contain. `tensor_parallel_size * data_parallel_size` is the number of
+engine ranks. `physical_device_count` is the number of devices allocated to
+the group. `independent_kv_ranks` says how many ranks own separate KV pools.
+
+The audit calculates one KV-rank contract using the TP device count, then
+multiplies sequence and KV-token capacity by the number of independent KV
+ranks. It does not multiply capacity by expert-parallel size. EP changes model
+placement, so an EP recipe must supply resident weight bytes per device.
+
+For a context or concurrency-only request, the analytical memory bound can
+produce a group count. Nonzero RPS, prefill TPS, or decode TPS requires the
+matching measured per-group capacity. TTFT and TPOT targets require observed
+values. Missing measurements produce `incomplete`, not a guessed result.
+
+`MeasuredGroupProfile` binds those values to a SHA-256 fingerprint of the
+recipe's model, host, runtime, topology, and llm-d settings. It also records the
+context and request shape used by the measurement. One measured evidence record
+must carry that identity and every populated traffic, concurrency, and latency
+metric. This keeps latency and capacity tied to one operating point. The audit
+rejects a profile when its fingerprint, context, or supplied request shape
+differs from the requested recipe and load.
+
+The fingerprint preimage includes `serving-recipe-variant-1.0`. The audit
+recomputes it from the supplied recipe. Recipe names, configured group count,
+evidence, and device price are excluded because they do not change per-group
+performance. Runtime notes and vendor-support metadata are also excluded, and
+numeric fields are canonicalized before hashing.
+
+Demand may be supplied as RPS and tokens per request or as direct prefill and
+decode TPS. When both forms are supplied, their token rates must agree.
+`context_tokens` is the peak active prompt plus generated tokens per sequence.
+Latency targets and observations must use the same explicit percentile.
+
+The audit also compares llm-d block size, flow-control token limit, and maximum
+concurrent sequences with the calculated runtime values. A mismatch makes the
+recipe `invalid`. The result records `recipe-audit-formula-1.0` and the recipe
+fingerprint used for every derived group and device count.
+
+This schema does not represent pipeline parallelism or separate prefill and
+decode worker pools. Adapters must reject those topologies rather than map them
+to TP/DP/EP defaults.
+
+## Schema history
+
+The schemas describe normalized output from `to_dict()`, including nullable and
+defaulted fields. Hand-written CLI input documents may omit defaults and are
+validated by the dependency-free Python parsers.
+
+- `capacity-contract-1.0`: historical alpha schema with an invalid scalar
+  sequence bound; retained for reference only.
+- `capacity-contract-2.0`: current breaking schema with block/token budgets and
+  a context-dependent concurrency envelope.
+- `serving-recipe-1.0`, `load-requirement-1.0`, and `recipe-audit-1.0`: host
+  topology, requested load, and the resulting configuration audit.
