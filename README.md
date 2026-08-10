@@ -14,15 +14,16 @@ The result is a versioned JSON contract with:
 - a context-dependent concurrency envelope instead of one misleading scalar;
 - assumptions, warnings, a validation level, and evidence sources;
 - reverse-fit results across a hardware inventory;
-- llm-d planner and scaling-policy payloads; and
+- llm-d planner and scaling-policy payloads;
 - measured-profile replica recommendations with cost and GPU-hour deltas;
 - TP, DP, and EP serving recipe checks; and
 - a direct answer for whether a configured recipe can handle the requested
   context and load.
 
-The library does not start vLLM or SGLang, discover GPUs, mutate a cluster, or
-claim throughput and latency from model parameters. Runtime initialization and
-SLO performance require matching measured evidence.
+The library does not start vLLM or SGLang, discover GPUs, resolve Hugging Face
+models, query provider catalogs, mutate a cluster, or claim throughput and
+latency from model parameters. Callers supply pinned model and hardware facts.
+Runtime initialization and SLO performance require matching measured evidence.
 
 ## Why the contract is useful
 
@@ -42,12 +43,25 @@ out hardware and support planning, but it does not promise production capacity.
 Requires Python 3.12+.
 
 ```bash
+git clone https://github.com/santho090/inference-capacity-contract.git
+cd inference-capacity-contract
 python -m pip install .
 icc --help
 ```
 
 The runtime package has no third-party dependencies. Development tools are
 installed separately with `python -m pip install -e '.[dev]'`.
+
+## Choose the right operation
+
+| Question | Python API | CLI |
+|---|---|---|
+| Does this model fit this hardware/runtime? | `capacity_for` | `icc plan` |
+| Which supplied hardware candidates fit? | `what_fits` | `icc fit` |
+| How many replicas does a measured workload need? | `recommend_scale` | `icc scale` |
+| Is this complete TP/DP/EP and llm-d recipe good for this load? | `audit_recipe` | `icc audit` |
+| Is an existing capacity document valid? | `CapacityContract.from_dict` | `icc validate` |
+| How do I pass a contract to another planner? | adapter functions | `icc export` |
 
 ## Python example
 
@@ -132,9 +146,31 @@ The library computes a SHA-256 fingerprint over that variant. It excludes the
 recipe name, configured group count, evidence, and device price. None of those
 changes per-group performance, so one measured profile can be reused while
 exploring group count or cost.
+
 Runtime notes and vendor-support metadata are also excluded. Numeric fields are
 canonicalized before hashing.
+
 The fingerprint preimage is versioned as `serving-recipe-variant-1.0`.
+
+The fixture files can also be used directly from Python:
+
+```python
+import json
+from pathlib import Path
+
+from inference_capacity_contract import LoadRequirement, ServingRecipe, audit_recipe
+
+recipe_path = Path("docs/fixtures/serving-recipe-hybrid-tp8.json")
+load_path = Path("docs/fixtures/load-context-concurrency.json")
+recipe = ServingRecipe.from_dict(json.loads(recipe_path.read_text()))
+load = LoadRequirement.from_dict(json.loads(load_path.read_text()))
+
+audit = audit_recipe(recipe, load)
+print(audit.status)  # sufficient
+print(audit.required_groups)  # 2
+print(audit.required_devices)  # 16
+print(audit.additional_devices_needed)  # 0
+```
 
 The audit checks:
 
@@ -149,10 +185,12 @@ The result also reports the configured device count and any additional groups
 or devices needed. Those shortfall fields are `null` when measurements are
 missing, because the library does not have enough information to size the load.
 
-The status is `sufficient` when the configured group count covers every known
-driver. It is `insufficient` when the load or latency target fails,
-`incomplete` when a traffic or latency input has no matching measurement, and
-`invalid` when the configuration contradicts the memory or routing math.
+| Status | Meaning |
+|---|---|
+| `sufficient` | The configured groups cover every evaluated driver. |
+| `insufficient` | The recipe cannot meet the requested context, load, or latency target. |
+| `incomplete` | A traffic or latency requirement has no matching measurement. |
+| `invalid` | The recipe, routing settings, or attached evidence contradicts the contract. |
 
 Context and concurrency can be checked analytically. RPS, prefill TPS, decode
 TPS, TTFT, and TPOT need measurements from the exact model, runtime, and
