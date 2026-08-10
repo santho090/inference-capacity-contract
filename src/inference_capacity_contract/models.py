@@ -257,10 +257,9 @@ class HardwareSpec:
 class RuntimeVariant:
     """Pinned runtime configuration for one tensor-parallel serving replica.
 
-    Replica/data parallel count is intentionally not part of this object. A
-    planner creates multiple replicas from a per-replica capacity contract.
-    For tensor parallelism greater than one, the runtime adapter must declare
-    the number of KV heads resident on each device.
+    Replica and data-parallel counts belong to the planner. This object covers
+    one replica. For tensor parallelism greater than one, the runtime adapter
+    must declare the number of KV heads resident on each device.
     """
 
     engine: str

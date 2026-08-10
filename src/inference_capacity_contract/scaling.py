@@ -1,4 +1,4 @@
-"""Evidence-backed, non-actuating autoscale recommendations."""
+"""Build replica recommendations from measured workload data."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def _required(
 
 @dataclass(frozen=True, slots=True)
 class ScalingRecommendation:
-    """A transparent replica recommendation derived from a measured profile."""
+    """A replica recommendation calculated from a measured profile."""
 
     schema_version: str
     contract: CapacityContract
@@ -62,10 +62,9 @@ class ScalingRecommendation:
 def recommend_scale(contract: CapacityContract, profile: WorkloadProfile) -> ScalingRecommendation:
     """Calculate a measured-profile replica recommendation.
 
-    The function refuses to produce a recommendation from static memory fit
-    alone. At least one measured evidence record and an exact profile identity
-    match are required. The returned value is a plan input, not a Kubernetes or
-    cloud action.
+    Static memory fit alone is not enough. The profile must have a measured
+    evidence record and must match the contract's identity. The result is a
+    planning input and does not change Kubernetes or cloud resources.
     """
 
     if not contract.fits:

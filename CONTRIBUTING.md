@@ -2,7 +2,7 @@
 
 Contributions must preserve the contract boundaries:
 
-- Keep calculations deterministic and unit-labelled.
+- Keep calculations deterministic and state the unit for every value.
 - Attach provenance and validity bounds to every derived quantity.
 - Treat unsupported architectures and missing evidence explicitly; do not
   silently infer compatibility.

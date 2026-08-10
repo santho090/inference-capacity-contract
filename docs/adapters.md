@@ -1,7 +1,8 @@
 # Adapter boundary
 
-The core returns facts. Adapters translate those facts into a planner or policy
-vocabulary while preserving uncertainty. They never mutate infrastructure.
+The core returns capacity facts. Adapters translate them into the format a
+planner or scaling policy expects. They keep warnings and evidence intact and
+do not change infrastructure.
 
 ## llm-d planner payload
 
@@ -10,9 +11,8 @@ immutable model revision, hardware topology, runtime variant, per-device memory
 ledger, KV block/token budget, context/concurrency envelope, validation level,
 warnings, and evidence.
 
-This is a neutral adapter payload, not a claim that the shape is an upstream
-llm-d API. An integration must map it to a pinned llm-d version and test that
-translation against the upstream contract.
+This payload is not an upstream llm-d API. An integration must map it to a
+pinned llm-d version and test that mapping against the upstream contract.
 
 ## Scaling-policy payload
 

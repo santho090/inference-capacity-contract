@@ -1,6 +1,7 @@
 # Project context
 
-`inference-capacity-contract` is a public, dependency-free contract core for LLM serving capacity facts.
+`inference-capacity-contract` is a public, dependency-free library for
+calculating LLM serving capacity.
 
 ## Vocabulary
 
@@ -8,9 +9,11 @@
 - **Runtime variant**: engine, version, parallelism, cache dtype, and explicit reserves.
 - **Hardware topology**: vendor, device count, memory, and optional price/interconnect metadata.
 - **Evidence record**: provenance for analytical, measured, reported, or extrapolated claims.
-- **Capacity contract**: versioned descriptive output; never an actuation command.
+- **Capacity contract**: versioned capacity output that does not change infrastructure.
 - **Scaling policy input**: per-replica facts consumed by a separate workload-aware autoscaling adapter.
 
 ## Design rule
 
-Static memory fit, runtime initialization, SLO performance, and live autoscaling are different claims. The public core must keep them separate and preserve uncertainty in machine-readable output.
+Static memory fit, runtime initialization, SLO performance, and live
+autoscaling are different claims. The library reports them separately and
+records uncertainty in its output.

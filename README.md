@@ -1,20 +1,20 @@
 # Inference Capacity Contract
 
-`inference-capacity-contract` is a dependency-free Python core for calculating
-auditable LLM memory and KV-cache capacity. It answers one bounded question:
+`inference-capacity-contract` is a dependency-free Python library for
+calculating LLM memory and KV-cache capacity. It answers this question:
 
-> Given an immutable model artifact, a pinned runtime configuration, and a
-> hardware topology for one serving replica, what is analytically feasible?
+> Given an exact model version, runtime configuration, and hardware layout for
+> one serving replica, what fits in memory?
 
-It produces a versioned JSON contract containing:
+The result is a versioned JSON contract with:
 
 - weight, runtime-reserve, activation-reserve, and KV-cache memory accounting;
 - model, vendor, and tensor-parallel topology compatibility checks;
 - per-device KV bytes/token, block budget, and token budget;
 - a context-dependent concurrency envelope instead of one misleading scalar;
-- explicit assumptions, warnings, validation level, and evidence provenance;
+- assumptions, warnings, a validation level, and evidence sources;
 - reverse-fit results across a hardware inventory;
-- neutral llm-d/planner and scaling-policy payloads; and
+- llm-d planner and scaling-policy payloads; and
 - measured-profile replica recommendations with cost and GPU-hour deltas.
 
 The library does not start vLLM or SGLang, discover GPUs, mutate a cluster, or
@@ -25,14 +25,14 @@ SLO performance require matching measured evidence.
 
 Serving systems often collapse different claims into one capacity number:
 
-1. analytical memory feasibility;
+1. whether the model fits in memory;
 2. runtime initialization success;
 3. measured workload/SLO performance;
 4. replica policy; and
-5. cluster actuation.
+5. changes to a live cluster.
 
-This project keeps those claims separate. A deterministic analytical result is
-useful for filtering and planning, but it is not a production capacity promise.
+This project reports those claims separately. Its memory calculation can rule
+out hardware and support planning, but it does not promise production capacity.
 
 ## Install from a checkout
 
@@ -84,9 +84,9 @@ print(contract.max_sequences_at(2048))  # 128: runtime max_num_seqs cap
 print(contract.max_sequences_at(8192))  # 55: KV-memory bound
 ```
 
-The two sequence values differ because concurrency is a function of active
-tokens per sequence. `capacity-contract-2.0` never reports an unsupported
-context-free `max_concurrent_sequences` value.
+The sequence limit depends on the active tokens in each sequence. For that
+reason, `capacity-contract-2.0` reports capacity by context length instead of a
+single `max_concurrent_sequences` value.
 
 ## CLI example
 
@@ -113,8 +113,8 @@ icc export \
   --target llmd-planner
 ```
 
-`fit` evaluates every hardware/runtime pair. An unsupported candidate is
-returned with `unsupported_reason`; it does not abort the inventory search.
+`fit` checks every hardware and runtime pair. If a pair is unsupported, the
+result includes `unsupported_reason` and the search continues.
 
 ## Memory and KV calculation
 
@@ -142,19 +142,18 @@ than one, the caller or future runtime adapter must provide
 Across TP devices it must cover every logical KV head; replication is allowed.
 The library will not silently assume that KV heads are sharded or replicated.
 MLA, hybrid cache groups, unequal K/V dimensions,
-sub-byte KV formats, and custom attention similarly require an explicit
+sub-byte KV formats, and custom attention require an explicit
 per-device KV-bytes/token override. The closed-form calculation is only for
 uniform full-attention K/V storage.
 
-Tensor-parallel weight sharding can also contain replicated tensors or uneven
-shards. Without `weight_bytes_per_device_override`, the analytical fallback
-divides total artifact bytes evenly and emits a warning. Runtime adapters should
-provide the measured or manifest-derived per-device value when available.
+Tensor-parallel weight layouts can contain replicated tensors or uneven shards.
+Without `weight_bytes_per_device_override`, the calculator divides total
+artifact bytes evenly and adds a warning. Runtime adapters should provide a
+measured or manifest-derived per-device value when one is available.
 
 ## Validation levels
 
-`capacity_for` produces `analytically-feasible`. The public vocabulary also
-reserves:
+`capacity_for` produces `analytically-feasible`. The schema also defines:
 
 - `runtime-supported`;
 - `initialization-validated`; and
@@ -162,15 +161,14 @@ reserves:
 
 Attaching an `EvidenceRecord` never silently promotes a contract. The producer
 must perform and record the validation step that justifies a higher level.
-Every generated contract includes an analytical provenance record naming the
-formula/schema version and exact model, hardware, and runtime scope.
+Every generated contract records the formula and schema version along with the
+exact model, hardware, and runtime used in the calculation.
 
 ## Evidence-backed scaling
 
-`WorkloadProfile` and `recommend_scale` calculate a replica recommendation only
-from measured per-replica request, prefill, decode, or concurrency capacity. A
-profile must match the exact model revision, hardware ID, runtime engine, and
-runtime version.
+`WorkloadProfile` and `recommend_scale` use measured per-replica request,
+prefill, decode, or concurrency capacity. The profile must match the contract's
+model revision, hardware ID, runtime engine, and runtime version.
 
 The recommendation reports:
 
@@ -206,7 +204,7 @@ parsers enforce their input contracts directly.
 
 ## Roadmap
 
-The next milestone is a library-first single-model solver:
+The next milestone expands the library into a single-model planner:
 
 1. resolve pinned Hugging Face artifacts and exact tensor bytes;
 2. accept normalized user-supplied provider inventories;

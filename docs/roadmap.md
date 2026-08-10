@@ -1,7 +1,7 @@
 # Roadmap and adoption gates
 
-The project is a library-first capacity solver. A service or autoscaler adapter
-is downstream of a validated standalone library.
+Keep the calculations and contracts in the standalone library. Services and
+autoscaler adapters should call it instead of reimplementing its rules.
 
 ## Phase 0: correctness and OSS hygiene
 
@@ -13,8 +13,8 @@ is downstream of a validated standalone library.
 - tighten the 2.0 schemas; and
 - align README and security guidance with repository behavior.
 
-Exit gate: clean source and installed-wheel validation passes on Python 3.12
-and 3.13.
+This phase is done when source-tree and installed-wheel checks pass on Python
+3.12 and 3.13.
 
 ## Phase 1: model resolution and quantized artifacts
 
@@ -24,8 +24,8 @@ and 3.13.
 - calculate actual resident bytes for real quantized artifacts; and
 - attach field-level provenance.
 
-Exit gate: one public model and at least one real quantized artifact resolve
-reproducibly and replay offline.
+This phase is done when one public model and one real quantized artifact resolve
+to pinned manifests that can be replayed offline.
 
 ## Phase 2: single-model analytical solver
 
@@ -36,8 +36,9 @@ reproducibly and replay offline.
   claims; and
 - property-test monotonicity and forward/reverse consistency.
 
-Exit gate: one resolved model evaluates multiple providers without requiring a
-measured performance profile and clearly labels analytical/estimated results.
+This phase is done when one resolved model can be checked against multiple
+providers without a measured performance profile. Every result must say whether
+it is analytical or estimated.
 
 ## Phase 3: measured SLO planning
 
@@ -47,10 +48,10 @@ measured performance profile and clearly labels analytical/estimated results.
 - filter by RPS/TPS/TTFT/TPOT/E2E constraints; and
 - publish prediction-error and initialization-validation tables.
 
-Exit gate: a measured demand plan can be explored in reverse with consistent
-capacity and SLO results.
+This phase is done when the planner can solve the same measured workload from
+either direction and return consistent capacity and SLO results.
 
-## Later
+## Later phases
 
 - SGLang runtime adapter;
 - live provider catalog importers;

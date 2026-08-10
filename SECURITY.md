@@ -1,7 +1,7 @@
 # Security policy
 
-This library is offline-first and has no runtime credentials, network client,
-model downloader, or Kubernetes actuator. Do not add private endpoints,
+This library has no runtime credentials, network client, model downloader, or
+Kubernetes actuator. Do not add private endpoints,
 tokens, fleet inventory, customer data, or internal deployment recipes to
 issues, fixtures, tests, or pull requests.
 

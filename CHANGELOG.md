@@ -9,7 +9,7 @@
 - Requires explicit TP KV layouts and runtime-specific overrides for hybrid,
   MLA, sub-byte, and custom cache layouts.
 - Adds strict semantic validation, analytical provenance, measured-concurrency
-  scaling, GPU-hour estimates, and hardened source/wheel release gates.
+  scaling, GPU-hour estimates, and source/wheel build checks.
 
 This release introduces the breaking `capacity-contract-2.0` and
 `scaling-recommendation-2.0` schemas. Historical 1.0 schemas remain under

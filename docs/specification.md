@@ -2,8 +2,8 @@
 
 Current schema identifier: `capacity-contract-2.0`
 
-The JSON document is the durable interchange format. Python dataclasses are a
-convenience layer over the same fields.
+The JSON document is the interchange format. Python dataclasses expose the same
+fields for callers using the library directly.
 
 ## Per-replica boundary
 
@@ -61,10 +61,10 @@ max_sequences_at(context_tokens)
 
 `runtime.max_num_seqs` caps the final value when configured.
 
-`concurrency_envelope` materializes this function at useful context lengths.
+`concurrency_envelope` records this function at useful context lengths.
 Consumers may call the Python contract's `max_sequences_at(context_tokens)` for
-another point. The schema deliberately has no context-free maximum sequence
-field because the quantity is not a scalar.
+another point. The schema has no context-free maximum sequence field because
+the quantity is not a scalar.
 
 These capacities are per device because every TP device stores a shard of the
 same sequences. They are already the replica bottleneck and must not be
@@ -94,20 +94,20 @@ ceil(demand / (measured per-replica capacity × target utilization))
 ```
 
 The maximum driver is buffered and bounded by configured min/max replicas.
-Peak concurrency additionally requires `concurrency_context_tokens` and a
+Peak concurrency also requires `concurrency_context_tokens` and a
 measured `sustainable_concurrent_sequences_per_replica`. The solver uses the
 lower of that measurement and the contract's context-specific analytical KV
 bound.
 
-The recommendation reports replica count, GPU-hours per hour, GPU-hour delta,
-and—when price is available—hourly cost and cost delta. It is a policy input,
-not an actuation command.
+The recommendation reports replica count, GPU-hours per hour, and GPU-hour
+delta. When a price is available, it also reports hourly cost and cost delta.
+The result is a policy input, not an actuation command.
 
 ## Schema history
 
-The schemas describe normalized output from `to_dict()`, where nullable and
-defaulted fields are materialized. Hand-written CLI input documents may omit
-defaults and are validated by the dependency-free Python parsers.
+The schemas describe normalized output from `to_dict()`, including nullable and
+defaulted fields. Hand-written CLI input documents may omit defaults and are
+validated by the dependency-free Python parsers.
 
 - `capacity-contract-1.0`: historical alpha schema with an invalid scalar
   sequence bound; retained for reference only.

@@ -1,8 +1,8 @@
-"""Small, non-actuating export adapters for upstream schedulers.
+"""Export capacity contracts for planners and scaling policies.
 
-The payloads are intentionally neutral. They carry facts and bounds that a
-planner or autoscaler can consume; they do not emit deployment YAML, mutate a
-cluster, or choose a replica count without measured workload evidence.
+The payloads contain capacity facts and bounds. They do not emit deployment
+YAML, change a cluster, or choose a replica count without measured workload
+evidence.
 """
 
 from __future__ import annotations
@@ -44,9 +44,9 @@ def to_llmd_planner_payload(contract: CapacityContract) -> dict[str, Any]:
 def to_scaling_policy_input(contract: CapacityContract) -> dict[str, Any]:
     """Export per-replica bounds for a WVA/KEDA-style policy adapter.
 
-    No desired replica count is invented here. Queue-to-replica conversion
-    needs an observed throughput or latency profile, so the payload marks that
-    missing input explicitly.
+    Queue-to-replica conversion needs an observed throughput or latency
+    profile. The payload leaves the replica count empty and marks that input as
+    required.
     """
 
     return {
