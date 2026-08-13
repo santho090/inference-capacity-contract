@@ -12,13 +12,16 @@ from .drafts import (
 )
 from .importers import (
     ModelManifest,
+    ModelResolutionDraft,
     VLLMInitializationProfile,
     import_huggingface_manifest,
     import_vllm_benchmark,
     import_vllm_initialization,
+    inspect_huggingface_config,
     materialize_recipe_draft,
     parse_safetensors_header,
     resolve_huggingface_manifest,
+    resolve_huggingface_model_draft,
     tensor_element_count_from_safetensors_headers,
 )
 from .inventory import (
@@ -98,13 +101,16 @@ __all__ = [
     "audit_recipe_draft",
     "import_llmd_values",
     "ModelManifest",
+    "ModelResolutionDraft",
     "VLLMInitializationProfile",
     "import_huggingface_manifest",
+    "inspect_huggingface_config",
     "import_vllm_benchmark",
     "import_vllm_initialization",
     "materialize_recipe_draft",
     "parse_safetensors_header",
     "resolve_huggingface_manifest",
+    "resolve_huggingface_model_draft",
     "tensor_element_count_from_safetensors_headers",
     "ProviderInstanceSpec",
     "ProviderInventory",

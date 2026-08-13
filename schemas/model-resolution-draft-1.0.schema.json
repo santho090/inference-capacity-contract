@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santho090.github.io/inference-capacity-contract/schemas/model-resolution-draft-1.0.schema.json",
+  "title": "Model Resolution Draft 1.0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "model_id",
+    "revision",
+    "facts",
+    "field_sources",
+    "unresolved",
+    "warnings",
+    "ready"
+  ],
+  "properties": {
+    "schema_version": {"const": "model-resolution-draft-1.0"},
+    "model_id": {"type": "string", "minLength": 1},
+    "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "facts": {
+      "type": "object",
+      "required": [
+        "architecture",
+        "parameter_count",
+        "num_layers",
+        "num_kv_heads",
+        "num_attention_heads",
+        "hidden_size",
+        "head_dim",
+        "weight_dtype",
+        "quantization_format",
+        "max_model_len",
+        "attention_type",
+        "kv_bytes_per_token_per_device_override",
+        "resident_weight_bytes_override"
+      ],
+      "properties": {
+        "architecture": {"type": ["string", "null"], "minLength": 1},
+        "parameter_count": {"type": ["integer", "null"], "minimum": 1},
+        "num_layers": {"type": ["integer", "null"], "minimum": 1},
+        "num_kv_heads": {"type": ["integer", "null"], "minimum": 1},
+        "num_attention_heads": {"type": ["integer", "null"], "minimum": 1},
+        "hidden_size": {"type": ["integer", "null"], "minimum": 1},
+        "head_dim": {"type": ["integer", "null"], "minimum": 1},
+        "weight_dtype": {"type": ["string", "null"], "minLength": 1},
+        "quantization_format": {"type": ["string", "null"], "minLength": 1},
+        "max_model_len": {"type": ["integer", "null"], "minimum": 1},
+        "attention_type": {
+          "type": ["string", "null"],
+          "enum": ["mha", "gqa", "mqa", "mla", "hybrid", "custom", null]
+        },
+        "kv_bytes_per_token_per_device_override": {"type": ["integer", "null"], "minimum": 1},
+        "resident_weight_bytes_override": {"type": ["integer", "null"], "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "field_sources": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "reason", "required_for"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1},
+          "required_for": {"enum": ["identity", "memory", "topology", "routing", "traffic"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "ready": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

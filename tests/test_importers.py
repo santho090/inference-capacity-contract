@@ -14,6 +14,7 @@ from inference_capacity_contract import (
     HardwareSpec,
     LLMDRoutingSpec,
     ModelManifest,
+    ModelResolutionDraft,
     ModelSpec,
     ParallelTopology,
     RuntimeVariant,
@@ -22,9 +23,11 @@ from inference_capacity_contract import (
     import_llmd_values,
     import_vllm_benchmark,
     import_vllm_initialization,
+    inspect_huggingface_config,
     materialize_recipe_draft,
     parse_safetensors_header,
     resolve_huggingface_manifest,
+    resolve_huggingface_model_draft,
     tensor_element_count_from_safetensors_headers,
 )
 
@@ -69,6 +72,241 @@ def _recipe() -> ServingRecipe:
 
 
 class ModelManifestImporterTests(unittest.TestCase):
+    def test_model_resolution_draft_preserves_discovered_kimi_facts(self) -> None:
+        config: dict[str, object] = {
+            "architectures": ["KimiK3ForConditionalGeneration"],
+            "text_config": {
+                "num_hidden_layers": 93,
+                "num_key_value_heads": 96,
+                "num_attention_heads": 96,
+                "hidden_size": 7168,
+                "v_head_dim": 128,
+                "max_position_embeddings": 1_048_576,
+                "kv_lora_rank": 512,
+                "linear_attn_config": {"head_dim": 128},
+                "quantization_config": {
+                    "format": "mxfp4-pack-quantized",
+                    "ignore": ["lm_head"],
+                    "config_groups": {"group_0": {"weights": {"num_bits": 4}}},
+                },
+            },
+        }
+
+        draft = inspect_huggingface_config("moonshotai/Kimi-K3", PINNED_REVISION, config)
+        restored = ModelResolutionDraft.from_dict(draft.to_dict())
+
+        self.assertEqual(restored, draft)
+        self.assertFalse(draft.ready)
+        self.assertEqual(draft.facts["num_layers"], 93)
+        self.assertEqual(draft.facts["num_kv_heads"], 96)
+        self.assertEqual(draft.facts["head_dim"], 128)
+        self.assertEqual(draft.facts["attention_type"], "hybrid")
+        self.assertEqual(draft.facts["weight_dtype"], "quantized")
+        self.assertEqual(draft.facts["quantization_format"], "mxfp4-pack-quantized")
+        self.assertEqual(
+            {item.path for item in draft.unresolved},
+            {
+                "parameter_count_override",
+                "kv_bytes_per_token_per_device_override",
+                "resident_weight_bytes_override",
+            },
+        )
+
+    def test_online_model_draft_uses_api_count_for_unquantized_config(self) -> None:
+        calls: list[str] = []
+
+        def fetch(url: str) -> dict[str, object]:
+            calls.append(url)
+            if url.endswith("config.json"):
+                return {
+                    "num_hidden_layers": 2,
+                    "num_key_value_heads": 1,
+                    "num_attention_heads": 2,
+                    "hidden_size": 128,
+                    "max_position_embeddings": 1024,
+                    "torch_dtype": "float16",
+                }
+            return {"sha": PINNED_REVISION, "safetensors": {"total": 1024}}
+
+        draft = resolve_huggingface_model_draft(
+            "example/model",
+            PINNED_REVISION,
+            fetch_json=fetch,
+        )
+
+        self.assertTrue(draft.ready)
+        self.assertEqual(draft.facts["parameter_count"], 1024)
+        self.assertEqual(draft.field_sources["parameter_count"], "huggingface-api.safetensors.total")
+        self.assertEqual(len(calls), 2)
+
+    def test_model_draft_reports_missing_architecture_fields_instead_of_crashing(self) -> None:
+        draft = inspect_huggingface_config(
+            "example/sparse-config",
+            PINNED_REVISION,
+            {"torch_dtype": "bfloat16", "num_parameters": 1000},
+        )
+
+        self.assertFalse(draft.ready)
+        self.assertEqual(
+            {item.path for item in draft.unresolved},
+            {
+                "model.num_layers",
+                "model.num_kv_heads",
+                "model.head_dim",
+                "model.max_model_len",
+                "model.attention_type",
+            },
+        )
+
+    def test_model_resolution_parser_rejects_tampered_readiness_and_provenance(self) -> None:
+        draft = inspect_huggingface_config(
+            "example/model",
+            PINNED_REVISION,
+            {
+                "num_hidden_layers": 2,
+                "num_key_value_heads": 1,
+                "num_attention_heads": 2,
+                "hidden_size": 128,
+                "max_position_embeddings": 1024,
+                "torch_dtype": "float16",
+                "num_parameters": 1000,
+            },
+        )
+        readiness = draft.to_dict()
+        readiness["ready"] = False
+        with self.assertRaisesRegex(ContractError, "ready does not match"):
+            ModelResolutionDraft.from_dict(readiness)
+
+        provenance = draft.to_dict()
+        del provenance["field_sources"]["head_dim"]
+        with self.assertRaisesRegex(ContractError, "missing field provenance"):
+            ModelResolutionDraft.from_dict(provenance)
+
+        incomplete = inspect_huggingface_config(
+            "example/model",
+            PINNED_REVISION,
+            {"torch_dtype": "float16"},
+        ).to_dict()
+        incomplete["unresolved"][0]["required_for"] = "guessing"
+        with self.assertRaisesRegex(ContractError, "required_for is unsupported"):
+            ModelResolutionDraft.from_dict(incomplete)
+
+    def test_unknown_weight_format_can_be_bound_by_measured_resident_bytes(self) -> None:
+        config = {
+            "num_hidden_layers": 2,
+            "num_key_value_heads": 1,
+            "num_attention_heads": 2,
+            "hidden_size": 128,
+            "max_position_embeddings": 1024,
+            "torch_dtype": "vendor_packed",
+            "num_parameters": 1000,
+        }
+        draft = inspect_huggingface_config(
+            "example/packed",
+            PINNED_REVISION,
+            config,
+            resident_weight_bytes_override=800,
+        )
+        manifest = import_huggingface_manifest(
+            "example/packed",
+            PINNED_REVISION,
+            config,
+            {"metadata": {"total_size": 700}},
+            resident_weight_bytes_override=800,
+        )
+
+        self.assertTrue(draft.ready)
+        self.assertEqual(manifest.model.weight_dtype, "vendor_packed")
+        self.assertEqual(manifest.model.explicit_weight_bytes, 800)
+
+    def test_missing_weight_dtype_is_unresolved_instead_of_defaulting_to_bf16(self) -> None:
+        config = {
+            "num_hidden_layers": 2,
+            "num_key_value_heads": 1,
+            "num_attention_heads": 2,
+            "hidden_size": 128,
+            "max_position_embeddings": 1024,
+            "num_parameters": 1000,
+        }
+
+        draft = inspect_huggingface_config("example/no-dtype", PINNED_REVISION, config)
+
+        self.assertIsNone(draft.facts["weight_dtype"])
+        self.assertEqual({item.path for item in draft.unresolved}, {"weight_dtype_override"})
+        with self.assertRaisesRegex(ContractError, "weight_dtype_override"):
+            import_huggingface_manifest(
+                "example/no-dtype",
+                PINNED_REVISION,
+                config,
+                {"metadata": {"total_size": 1000}},
+            )
+
+    def test_partial_hybrid_config_uses_explicit_facts_and_caller_weight_format(self) -> None:
+        draft = inspect_huggingface_config(
+            "example/partial-hybrid",
+            PINNED_REVISION,
+            {
+                "head_dim": 64,
+                "max_position_embeddings": 4096,
+                "linear_attn_config": {"head_dim": 32},
+                "num_parameters": 1000,
+            },
+            kv_bytes_per_token_per_device_override=128,
+            resident_weight_bytes_override=800,
+            weight_dtype_override="vendor_packed",
+        )
+
+        self.assertEqual(draft.facts["head_dim"], 64)
+        self.assertEqual(draft.facts["attention_type"], "hybrid")
+        self.assertEqual(draft.facts["weight_dtype"], "vendor_packed")
+        self.assertEqual(
+            {item.path for item in draft.unresolved},
+            {"model.num_layers", "model.num_kv_heads"},
+        )
+
+        linear_head = inspect_huggingface_config(
+            "example/linear-head",
+            PINNED_REVISION,
+            {
+                "max_position_embeddings": 4096,
+                "linear_attn_config": {"head_dim": 32},
+                "num_parameters": 1000,
+                "torch_dtype": "float16",
+            },
+            kv_bytes_per_token_per_device_override=128,
+        )
+        self.assertEqual(linear_head.facts["head_dim"], 32)
+        self.assertEqual(linear_head.field_sources["head_dim"], "config.linear_attn_config.head_dim")
+
+    def test_model_resolution_parser_rejects_invalid_versioned_fields(self) -> None:
+        draft = inspect_huggingface_config(
+            "example/model",
+            PINNED_REVISION,
+            {
+                "num_hidden_layers": 2,
+                "num_key_value_heads": 1,
+                "num_attention_heads": 2,
+                "hidden_size": 128,
+                "max_position_embeddings": 1024,
+                "torch_dtype": "float16",
+            },
+        )
+
+        missing_fact = draft.to_dict()
+        del missing_fact["facts"]["architecture"]
+        with self.assertRaisesRegex(ContractError, "versioned fact set"):
+            ModelResolutionDraft.from_dict(missing_fact)
+
+        bad_attention = draft.to_dict()
+        bad_attention["facts"]["attention_type"] = "unknown"
+        with self.assertRaisesRegex(ContractError, "attention_type is unsupported"):
+            ModelResolutionDraft.from_dict(bad_attention)
+
+        duplicate = draft.to_dict()
+        duplicate["unresolved"].append(dict(duplicate["unresolved"][0]))
+        with self.assertRaisesRegex(ContractError, "paths must be unique"):
+            ModelResolutionDraft.from_dict(duplicate)
+
     def test_imports_pinned_config_and_index_metadata(self) -> None:
         config = {
             "architectures": ["ExampleForCausalLM"],
@@ -249,6 +487,7 @@ class ModelManifestImporterTests(unittest.TestCase):
                 "hidden_size": 3072,
                 "head_dim": 256,
                 "max_position_embeddings": 8192,
+                "torch_dtype": "bfloat16",
                 "num_parameters": 7_000_000_000,
             },
             {"metadata": {"total_size": 4_000_000_000}},

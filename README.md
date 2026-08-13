@@ -72,6 +72,7 @@ installed separately with `python -m pip install -e '.[dev]'`.
 | How many replicas does a measured workload need? | `recommend_scale` | `icc scale` |
 | Is this complete TP/DP/EP and llm-d recipe good for this load? | `audit_recipe` | `icc audit` |
 | What can be checked before all recipe facts are known? | `audit_recipe_draft` | `icc import-llmd`, `icc audit-draft` |
+| What model facts are available before a manifest is complete? | `resolve_huggingface_model_draft` | `icc inspect-model` |
 | How do I pin model metadata without downloading weights? | `resolve_huggingface_manifest` | `icc resolve-model` or `icc import-model-manifest` |
 | How do I complete a draft after initialization? | `materialize_recipe_draft` | `icc materialize-recipe` |
 | How do I bind vLLM measurements to a recipe? | importer functions | `icc import-vllm-init`, `icc import-vllm-benchmark` |
@@ -234,6 +235,10 @@ claim that an index existed.
 The optional online CLI follows the same rule:
 
 ```bash
+icc inspect-model \
+  --repo-id example/model \
+  --revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
 icc resolve-model \
   --repo-id example/model \
   --revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
@@ -247,10 +252,13 @@ icc explore \
   --context-tokens 8192
 ```
 
-The first command needs network access for an uncached public model. Repeating
-the exact request reads the cached manifest without a network call. Planning
-from `model-manifest.json` is fully offline. Floating revisions such as `main`
-are rejected.
+`inspect-model` reads config-level metadata and returns discovered facts,
+field-level provenance, warnings, and unresolved inputs as a versioned JSON
+document. It does not read the SafeTensors index. `resolve-model` stays strict:
+it produces a complete manifest or fails without writing a partial manifest.
+It needs network access for an uncached public model, while repeating the exact
+cached request is offline. Planning from `model-manifest.json` is fully offline.
+Floating revisions such as `main` are rejected.
 
 For environments that fetch metadata themselves, use
 `import_huggingface_manifest` or the CLI:
@@ -270,19 +278,21 @@ model config or an explicit caller value. SafeTensors headers describe stored
 tensors, which may be packed and may include scale tensors; ICC records their
 element count separately. A mixed layout, including a quantization config with
 an ignore list, also needs measured resident weight bytes. Custom, hybrid, and
-MLA cache layouts need a measured KV-bytes/token override.
+MLA cache layouts need a measured KV-bytes/token override. A config that omits
+its weight dtype remains unresolved; use `--weight-dtype` rather than relying on
+an implicit BF16 default.
 
 For example, the pinned Kimi K3 config is enough to identify its 93-layer
 hybrid text model, explicit 128-wide value heads, 1,048,576-token model limit,
 and mixed MXFP4 layout. It is not enough to derive the logical parameter count,
-the runtime's hybrid KV bytes per token, or resident GPU bytes. The resolver
-returns those three missing inputs before fetching the large SafeTensors index:
+the runtime's hybrid KV bytes per token, or resident GPU bytes. Inspection
+returns those facts and three unresolved inputs without fetching the large
+SafeTensors index:
 
 ```bash
-icc resolve-model \
+icc inspect-model \
   --repo-id moonshotai/Kimi-K3 \
-  --revision 9f62e4e9fffbd0a83ddd60e1c209d828994b3569 \
-  --no-inspect-safetensors-headers
+  --revision 9f62e4e9fffbd0a83ddd60e1c209d828994b3569
 ```
 
 Supply `--parameter-count`, `--kv-bytes-per-token-per-device`, and
@@ -516,16 +526,14 @@ parsers enforce their input contracts directly.
 
 ## Roadmap
 
-The next milestone expands the library into a single-model planner:
+The single-model analytical planner is available. The next milestones are
+versioned runtime adapters, real initialization and serving validation across
+NVIDIA and AMD paths, prediction-error reporting, an SGLang adapter, optional
+provider catalog importers, and then multi-model portfolio planning. See
+[the detailed roadmap](docs/roadmap.md).
 
-1. resolve pinned Hugging Face artifacts and exact tensor bytes;
-2. accept normalized user-supplied provider inventories;
-3. compare and rank recipes across those providers;
-4. import measured vLLM profiles for RPS/TPS/TTFT/TPOT planning; and
-5. later add live catalogs and a separate multi-model portfolio planner.
-
-No HTTP service or autoscaler integration precedes a validated library contract.
-See `docs/roadmap.md`.
+HTTP service and autoscaler integration remain deferred until the library's
+predictions are validated against real deployments.
 
 ## Project status
 

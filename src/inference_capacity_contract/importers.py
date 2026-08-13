@@ -16,7 +16,7 @@ from typing import Any, Protocol
 from urllib.parse import quote, urlparse
 
 from .calculator import capacity_for
-from .drafts import RecipeDraft
+from .drafts import RecipeDraft, UnresolvedFact
 from .models import DTYPE_BITS, ContractError, EvidenceKind, EvidenceRecord, ModelSpec
 from .recipe import (
     RECIPE_VARIANT_FINGERPRINT_VERSION,
@@ -49,11 +49,13 @@ def _required_string(name: str, value: object) -> str:
     return value
 
 
-def _config_int(config: Mapping[str, Any], *names: str, source: str = "config") -> tuple[int, str]:
+def _optional_config_int(
+    config: Mapping[str, Any], *names: str, source: str = "config"
+) -> tuple[int | None, str | None]:
     for name in names:
         if name in config:
             return _positive_int(name, config[name]), f"{source}.{name}"
-    raise ContractError(f"model config is missing {' or '.join(names)}")
+    return None, None
 
 
 def _text_config(config: Mapping[str, Any]) -> tuple[Mapping[str, Any], str]:
@@ -135,25 +137,6 @@ def _attention_type(config: Mapping[str, Any], kv_heads: int, attention_heads: i
     if kv_heads == 1:
         return "mqa"
     return "gqa"
-
-
-def _required_manifest_inputs(
-    *,
-    parameter_count: object,
-    attention_type: str,
-    quantization_present: bool,
-    quantization_bits: int | None,
-    kv_bytes_per_token_per_device_override: int | None,
-    resident_weight_bytes_override: int | None,
-) -> list[str]:
-    required: list[str] = []
-    if parameter_count is None:
-        required.append("parameter_count_override (logical model parameter count)")
-    if attention_type in {"custom", "hybrid", "mla"} and kv_bytes_per_token_per_device_override is None:
-        required.append("kv_bytes_per_token_per_device_override (measured runtime KV layout)")
-    if quantization_present and quantization_bits not in (4, 8) and resident_weight_bytes_override is None:
-        required.append("resident_weight_bytes_override (unsupported or mixed quantization layout)")
-    return required
 
 
 def _normalize_dtype(value: object) -> str:
@@ -262,6 +245,340 @@ class ModelManifest:
         return cls.from_dict(value)
 
 
+@dataclass(frozen=True, slots=True)
+class ModelResolutionDraft:
+    """Config-derived model facts plus inputs required for a strict manifest."""
+
+    schema_version: str
+    model_id: str
+    revision: str
+    facts: Mapping[str, Any]
+    field_sources: Mapping[str, str]
+    unresolved: tuple[UnresolvedFact, ...]
+    warnings: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "model-resolution-draft-1.0":
+            raise ContractError("unsupported model resolution draft schema_version")
+        _required_string("model_id", self.model_id)
+        _pinned_revision(self.revision)
+        if not isinstance(self.facts, Mapping):
+            raise ContractError("model resolution facts must be an object")
+        required_facts = {
+            "architecture",
+            "parameter_count",
+            "num_layers",
+            "num_kv_heads",
+            "num_attention_heads",
+            "hidden_size",
+            "head_dim",
+            "weight_dtype",
+            "quantization_format",
+            "max_model_len",
+            "attention_type",
+            "kv_bytes_per_token_per_device_override",
+            "resident_weight_bytes_override",
+        }
+        if set(self.facts) != required_facts:
+            raise ContractError("model resolution facts must contain exactly the versioned fact set")
+        for name in (
+            "parameter_count",
+            "num_layers",
+            "num_kv_heads",
+            "num_attention_heads",
+            "hidden_size",
+            "head_dim",
+            "max_model_len",
+            "kv_bytes_per_token_per_device_override",
+            "resident_weight_bytes_override",
+        ):
+            value = self.facts[name]
+            if value is not None:
+                _positive_int(name, value)
+        for name in ("architecture", "quantization_format"):
+            value = self.facts[name]
+            if value is not None:
+                _required_string(name, value)
+        weight_dtype = self.facts["weight_dtype"]
+        if weight_dtype is not None:
+            _required_string("weight_dtype", weight_dtype)
+        attention_type = self.facts["attention_type"]
+        if attention_type is not None and attention_type not in {"mha", "gqa", "mqa", "mla", "hybrid", "custom"}:
+            raise ContractError("model resolution attention_type is unsupported")
+        if not isinstance(self.field_sources, Mapping) or any(
+            not isinstance(key, str) or not key or not isinstance(value, str) or not value
+            for key, value in self.field_sources.items()
+        ):
+            raise ContractError("model resolution field_sources must contain string entries")
+        required_sources = {"model_id", "revision"} | {name for name, value in self.facts.items() if value is not None}
+        missing_sources = required_sources.difference(self.field_sources)
+        if missing_sources:
+            raise ContractError("model resolution is missing field provenance: " + ", ".join(sorted(missing_sources)))
+        if not all(isinstance(item, UnresolvedFact) for item in self.unresolved):
+            raise ContractError("model resolution unresolved entries must be UnresolvedFact values")
+        if not all(isinstance(item, str) for item in self.warnings):
+            raise ContractError("model resolution warnings must be strings")
+        paths = [item.path for item in self.unresolved]
+        if len(paths) != len(set(paths)):
+            raise ContractError("model resolution unresolved paths must be unique")
+        object.__setattr__(self, "facts", dict(self.facts))
+        object.__setattr__(self, "field_sources", dict(self.field_sources))
+        object.__setattr__(self, "unresolved", tuple(self.unresolved))
+        object.__setattr__(self, "warnings", tuple(self.warnings))
+
+    @property
+    def ready(self) -> bool:
+        return not self.unresolved
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "model_id": self.model_id,
+            "revision": self.revision,
+            "facts": dict(self.facts),
+            "field_sources": dict(self.field_sources),
+            "unresolved": [item.to_dict() for item in self.unresolved],
+            "warnings": list(self.warnings),
+            "ready": self.ready,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ModelResolutionDraft:
+        facts = data.get("facts")
+        sources = data.get("field_sources")
+        unresolved = data.get("unresolved")
+        warnings = data.get("warnings")
+        if not isinstance(facts, Mapping):
+            raise ContractError("model resolution facts must be an object")
+        if not isinstance(sources, Mapping):
+            raise ContractError("model resolution field_sources must be an object")
+        if not isinstance(unresolved, list) or not all(isinstance(item, Mapping) for item in unresolved):
+            raise ContractError("model resolution unresolved must be an array of objects")
+        if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
+            raise ContractError("model resolution warnings must be an array of strings")
+        draft = cls(
+            _required_string("schema_version", data.get("schema_version")),
+            _required_string("model_id", data.get("model_id")),
+            _required_string("revision", data.get("revision")),
+            dict(facts),
+            {str(key): _required_string("field source", value) for key, value in sources.items()},
+            tuple(UnresolvedFact.from_dict(item) for item in unresolved),
+            tuple(warnings),
+        )
+        if data.get("ready") is not draft.ready:
+            raise ContractError("model resolution ready does not match unresolved inputs")
+        return draft
+
+
+def inspect_huggingface_config(
+    repo_id: str,
+    revision: str,
+    config: Mapping[str, Any],
+    *,
+    kv_bytes_per_token_per_device_override: int | None = None,
+    parameter_count_override: int | None = None,
+    resident_weight_bytes_override: int | None = None,
+    weight_dtype_override: str | None = None,
+    api_parameter_count: int | None = None,
+) -> ModelResolutionDraft:
+    """Inspect caller-fetched config without requiring weight metadata."""
+
+    repo = _required_string("repo_id", repo_id)
+    pinned = _pinned_revision(revision)
+    text, text_source = _text_config(config)
+    layers, layers_source = _optional_config_int(text, "num_hidden_layers", "n_layer", source=text_source)
+    kv_heads, kv_source = _optional_config_int(
+        text,
+        "num_key_value_heads",
+        "n_head_kv",
+        "num_attention_heads",
+        source=text_source,
+    )
+    attention_heads, attention_source = _optional_config_int(text, "num_attention_heads", "n_head", source=text_source)
+    hidden_size, hidden_source = _optional_config_int(text, "hidden_size", "n_embd", source=text_source)
+    head_dim: int | None = None
+    head_source: str | None = None
+    if hidden_size is not None and attention_heads is not None:
+        head_dim, head_source = _head_dim(text, text_source, hidden_size, attention_heads)
+    else:
+        for name in ("head_dim", "v_head_dim"):
+            if text.get(name) is not None:
+                head_dim = _positive_int(name, text.get(name))
+                head_source = f"{text_source}.{name}"
+                break
+        if head_dim is None:
+            linear_attention = text.get("linear_attn_config")
+            if isinstance(linear_attention, Mapping) and linear_attention.get("head_dim") is not None:
+                head_dim = _positive_int("linear_attn_config.head_dim", linear_attention.get("head_dim"))
+                head_source = f"{text_source}.linear_attn_config.head_dim"
+    max_model_len, context_source = _optional_config_int(
+        text,
+        "max_position_embeddings",
+        "model_max_length",
+        "n_positions",
+        source=text_source,
+    )
+    quantization, quantization_source = _quantization_config(config)
+    quantization_bits: int | None = None
+    quantization_format: str | None = None
+    warnings: list[str] = []
+    quantization_dtype_source: str | None = None
+    if quantization is not None and quantization_source is not None:
+        quantization_bits, quantization_dtype_source = _quantization_bits(quantization, quantization_source)
+        raw_format = quantization.get("format") or quantization.get("quant_method")
+        if raw_format is not None:
+            quantization_format = _required_string("quantization format", raw_format)
+        if quantization_bits not in (4, 8):
+            warnings.append("quantization metadata describes a mixed or unsupported resident weight layout")
+    raw_dtype: object
+    weight_dtype: str | None
+    dtype_source: str | None
+    if weight_dtype_override is not None:
+        raw_dtype = _required_string("weight_dtype_override", weight_dtype_override)
+        try:
+            weight_dtype = _normalize_dtype(raw_dtype)
+        except ContractError:
+            weight_dtype = str(raw_dtype).lower()
+        dtype_source = "caller.weight_dtype_override"
+    elif quantization is None:
+        dtype_key = "torch_dtype" if "torch_dtype" in text else "dtype" if "dtype" in text else None
+        raw_dtype = None if dtype_key is None else text.get(dtype_key)
+        if raw_dtype is None:
+            weight_dtype = None
+            dtype_source = None
+        else:
+            try:
+                weight_dtype = _normalize_dtype(raw_dtype)
+            except ContractError:
+                weight_dtype = str(raw_dtype).lower()
+            dtype_source = f"{text_source}.{dtype_key}"
+    else:
+        dtype_source = quantization_dtype_source
+        weight_dtype = f"int{quantization_bits}" if quantization_bits in (4, 8) else "quantized"
+    if isinstance(text.get("linear_attn_config"), Mapping):
+        attention_type: str | None = "hybrid"
+    elif "kv_lora_rank" in text:
+        attention_type = "mla"
+    elif any(key in text for key in ("q_lora_rank", "cache_group_config")):
+        attention_type = "custom"
+    elif kv_heads is not None and attention_heads is not None:
+        attention_type = _attention_type(text, kv_heads, attention_heads)
+    else:
+        attention_type = None
+    architecture_value = config.get("architectures")
+    architecture_source = "config.architectures[0]"
+    if not isinstance(architecture_value, list) or not architecture_value:
+        architecture_value = text.get("architectures")
+        architecture_source = f"{text_source}.architectures[0]"
+    architecture = (
+        architecture_value[0]
+        if isinstance(architecture_value, list) and architecture_value and isinstance(architecture_value[0], str)
+        else None
+    )
+    parameter_count = (
+        parameter_count_override
+        if parameter_count_override is not None
+        else config.get("num_parameters")
+        if config.get("num_parameters") is not None
+        else api_parameter_count
+    )
+    if parameter_count is not None:
+        parameter_count = _positive_int("parameter_count", parameter_count)
+    if kv_bytes_per_token_per_device_override is not None:
+        _positive_int("kv_bytes_per_token_per_device_override", kv_bytes_per_token_per_device_override)
+    if resident_weight_bytes_override is not None:
+        _positive_int("resident_weight_bytes_override", resident_weight_bytes_override)
+    facts: dict[str, Any] = {
+        "architecture": architecture,
+        "parameter_count": parameter_count,
+        "num_layers": layers,
+        "num_kv_heads": kv_heads,
+        "num_attention_heads": attention_heads,
+        "hidden_size": hidden_size,
+        "head_dim": head_dim,
+        "weight_dtype": weight_dtype,
+        "quantization_format": quantization_format,
+        "max_model_len": max_model_len,
+        "attention_type": attention_type,
+        "kv_bytes_per_token_per_device_override": kv_bytes_per_token_per_device_override,
+        "resident_weight_bytes_override": resident_weight_bytes_override,
+    }
+    field_sources: dict[str, str] = {
+        "model_id": "caller.repo_id",
+        "revision": "caller.immutable_revision",
+    }
+    if dtype_source is not None:
+        field_sources["weight_dtype"] = dtype_source
+    for name, source in (
+        ("num_layers", layers_source),
+        ("num_kv_heads", kv_source),
+        ("num_attention_heads", attention_source),
+        ("hidden_size", hidden_source),
+        ("head_dim", head_source),
+        ("max_model_len", context_source),
+    ):
+        if source is not None:
+            field_sources[name] = source
+    if architecture is not None:
+        field_sources["architecture"] = architecture_source
+    if attention_type is not None:
+        field_sources["attention_type"] = f"derived:{text_source}-attention-fields"
+    if quantization_format is not None and quantization_source is not None:
+        field_sources["quantization_format"] = quantization_source
+    if parameter_count is not None:
+        field_sources["parameter_count"] = (
+            "caller.parameter_count_override"
+            if parameter_count_override is not None
+            else "config.num_parameters"
+            if config.get("num_parameters") is not None
+            else "huggingface-api.safetensors.total"
+        )
+    if kv_bytes_per_token_per_device_override is not None:
+        field_sources["kv_bytes_per_token_per_device_override"] = "caller.measured-runtime-override"
+    if resident_weight_bytes_override is not None:
+        field_sources["resident_weight_bytes_override"] = "caller.measured-resident-weight-override"
+    unresolved: list[UnresolvedFact] = []
+    for path, value, reason, required_for in (
+        ("parameter_count_override", parameter_count, "logical model parameter count is absent", "identity"),
+        ("model.num_layers", layers, "text layer count is absent", "memory"),
+        ("model.num_kv_heads", kv_heads, "KV head count is absent", "memory"),
+        ("model.head_dim", head_dim, "attention head dimension is absent", "memory"),
+        ("weight_dtype_override", weight_dtype, "model weight dtype or format is absent", "memory"),
+        ("model.max_model_len", max_model_len, "maximum model context is absent", "memory"),
+        ("model.attention_type", attention_type, "attention layout is unresolved", "memory"),
+    ):
+        if value is None:
+            unresolved.append(UnresolvedFact(path, reason, required_for))
+    if attention_type in {"custom", "hybrid", "mla"} and kv_bytes_per_token_per_device_override is None:
+        unresolved.append(
+            UnresolvedFact(
+                "kv_bytes_per_token_per_device_override",
+                "custom cache layout requires measured per-device KV bytes per token",
+                "memory",
+            )
+        )
+    if (
+        (quantization is not None and quantization_bits not in (4, 8))
+        or (weight_dtype is not None and weight_dtype not in DTYPE_BITS)
+    ) and resident_weight_bytes_override is None:
+        unresolved.append(
+            UnresolvedFact(
+                "resident_weight_bytes_override",
+                "mixed or unsupported weight layout requires measured resident bytes",
+                "memory",
+            )
+        )
+    return ModelResolutionDraft(
+        "model-resolution-draft-1.0",
+        repo,
+        pinned,
+        facts,
+        field_sources,
+        tuple(unresolved),
+        tuple(warnings),
+    )
+
+
 def import_huggingface_manifest(
     repo_id: str,
     revision: str,
@@ -272,6 +589,7 @@ def import_huggingface_manifest(
     parameter_count_override: int | None = None,
     safetensors_headers: Mapping[str, bytes | Mapping[str, Any]] | None = None,
     resident_weight_bytes_override: int | None = None,
+    weight_dtype_override: str | None = None,
 ) -> ModelManifest:
     """Build an offline manifest from caller-fetched Hugging Face metadata.
 
@@ -279,68 +597,36 @@ def import_huggingface_manifest(
     SafeTensors index themselves, then cache this normalized result.
     """
 
-    repo = _required_string("repo_id", repo_id)
-    pinned = _pinned_revision(revision)
-    text, text_source = _text_config(config)
-    layers, layers_source = _config_int(text, "num_hidden_layers", "n_layer", source=text_source)
-    kv_heads, kv_source = _config_int(
-        text,
-        "num_key_value_heads",
-        "n_head_kv",
-        "num_attention_heads",
-        source=text_source,
+    draft = inspect_huggingface_config(
+        repo_id,
+        revision,
+        config,
+        kv_bytes_per_token_per_device_override=kv_bytes_per_token_per_device_override,
+        parameter_count_override=parameter_count_override,
+        resident_weight_bytes_override=resident_weight_bytes_override,
+        weight_dtype_override=weight_dtype_override,
     )
-    attention_heads, _ = _config_int(text, "num_attention_heads", "n_head", source=text_source)
-    hidden_size, _ = _config_int(text, "hidden_size", "n_embd", source=text_source)
-    head_dim, head_source = _head_dim(text, text_source, hidden_size, attention_heads)
-    max_model_len, context_source = _config_int(
-        text,
-        "max_position_embeddings",
-        "model_max_length",
-        "n_positions",
-        source=text_source,
-    )
-    quantization, quantization_source = _quantization_config(config)
-    quantization_bits: int | None = None
-    dtype_source: str
-    if quantization is None or quantization_source is None:
-        dtype_key = "torch_dtype" if "torch_dtype" in text else "dtype" if "dtype" in text else "default"
-        dtype = _normalize_dtype(text.get("torch_dtype", text.get("dtype", "bf16")))
-        dtype_source = f"{text_source}.{dtype_key}"
-    else:
-        quantization_bits, dtype_source = _quantization_bits(quantization, quantization_source)
-        dtype = f"int{quantization_bits}" if quantization_bits in (4, 8) else "quantized"
+    if not draft.ready:
+        required_inputs = "; ".join(f"{item.path} ({item.reason})" for item in draft.unresolved)
+        raise ContractError("model manifest requires caller inputs: " + required_inputs)
+    repo = draft.model_id
+    pinned = draft.revision
+    facts = draft.facts
+    parameter_count = _positive_int("parameter_count", facts["parameter_count"])
+    layers = _positive_int("num_layers", facts["num_layers"])
+    kv_heads = _positive_int("num_kv_heads", facts["num_kv_heads"])
+    head_dim = _positive_int("head_dim", facts["head_dim"])
+    dtype = _required_string("weight_dtype", facts["weight_dtype"])
+    max_model_len = _positive_int("max_model_len", facts["max_model_len"])
+    attention_type = _required_string("attention_type", facts["attention_type"])
+    architecture = None if facts["architecture"] is None else _required_string("architecture", facts["architecture"])
     metadata = safetensors_index.get("metadata")
     if not isinstance(metadata, Mapping):
         raise ContractError("SafeTensors index is missing metadata")
     weight_bytes = _positive_int("safetensors metadata.total_size", metadata.get("total_size"))
-    parameter_count_raw = (
-        parameter_count_override if parameter_count_override is not None else config.get("num_parameters")
-    )
     tensor_element_count = (
         None if safetensors_headers is None else tensor_element_count_from_safetensors_headers(safetensors_headers)
     )
-    attention_type = _attention_type(text, kv_heads, attention_heads)
-    required_inputs = _required_manifest_inputs(
-        parameter_count=parameter_count_raw,
-        attention_type=attention_type,
-        quantization_present=quantization is not None,
-        quantization_bits=quantization_bits,
-        kv_bytes_per_token_per_device_override=kv_bytes_per_token_per_device_override,
-        resident_weight_bytes_override=resident_weight_bytes_override,
-    )
-    if required_inputs:
-        raise ContractError("model manifest requires caller inputs: " + "; ".join(required_inputs))
-    assert parameter_count_raw is not None
-    parameter_count = _positive_int("parameter_count", parameter_count_raw)
-    architecture_value = config.get("architectures")
-    architecture_source = "config.architectures[0]"
-    if not isinstance(architecture_value, list) or not architecture_value:
-        architecture_value = text.get("architectures")
-        architecture_source = f"{text_source}.architectures[0]"
-    architecture: str | None = None
-    if isinstance(architecture_value, list) and architecture_value and isinstance(architecture_value[0], str):
-        architecture = architecture_value[0]
     model = ModelSpec(
         model_id=repo,
         revision=pinned,
@@ -359,22 +645,21 @@ def import_huggingface_manifest(
         kv_bytes_per_token_per_device_override=kv_bytes_per_token_per_device_override,
         architecture=architecture,
     )
-    field_sources = {
-        "model_id": "caller.repo_id",
-        "revision": "caller.immutable_revision",
-        "parameter_count": (
-            "caller.parameter_count_override" if parameter_count_override is not None else "config.num_parameters"
-        ),
-        "num_layers": layers_source,
-        "num_kv_heads": kv_source,
-        "head_dim": head_source,
-        "weight_dtype": dtype_source,
-        "max_model_len": context_source,
-        "attention_type": f"derived:{text_source}-attention-fields",
-        "artifact_bytes": "safetensors-index.metadata.total_size",
+    manifest_fields = {
+        "model_id",
+        "revision",
+        "parameter_count",
+        "num_layers",
+        "num_kv_heads",
+        "head_dim",
+        "weight_dtype",
+        "max_model_len",
+        "attention_type",
+        "architecture",
+        "kv_bytes_per_token_per_device_override",
     }
-    if architecture is not None:
-        field_sources["architecture"] = architecture_source
+    field_sources = {key: value for key, value in draft.field_sources.items() if key in manifest_fields}
+    field_sources["artifact_bytes"] = "safetensors-index.metadata.total_size"
     if resident_weight_bytes_override is not None:
         field_sources["explicit_weight_bytes"] = "caller.measured-resident-weight-override"
     if tensor_element_count is not None:
@@ -514,20 +799,14 @@ def _single_safetensors_index(header: bytes) -> Mapping[str, Any]:
     return {"metadata": {"total_size": payload_bytes}, "weight_map": weight_map}
 
 
-def resolve_huggingface_manifest(
+def _validate_model_resolution_request(
     repo_id: str,
     revision: str,
-    *,
-    fetch_json: JSONFetcher | None = None,
-    fetch_range: RangeFetcher | None = None,
-    cache_dir: Path | None = None,
-    kv_bytes_per_token_per_device_override: int | None = None,
-    parameter_count_override: int | None = None,
-    resident_weight_bytes_override: int | None = None,
-    inspect_safetensors_headers: bool = True,
-) -> ModelManifest:
-    """Resolve pinned metadata without downloading model weight shards."""
-
+    kv_bytes_per_token_per_device_override: int | None,
+    parameter_count_override: int | None,
+    resident_weight_bytes_override: int | None,
+    weight_dtype_override: str | None,
+) -> tuple[str, str]:
     repo = _required_string("repo_id", repo_id)
     if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) is None:
         raise ContractError("repo_id must be in owner/name form")
@@ -541,6 +820,79 @@ def resolve_huggingface_manifest(
         _positive_int("parameter_count_override", parameter_count_override)
     if resident_weight_bytes_override is not None:
         _positive_int("resident_weight_bytes_override", resident_weight_bytes_override)
+    if weight_dtype_override is not None:
+        _required_string("weight_dtype_override", weight_dtype_override)
+    return repo, pinned
+
+
+def resolve_huggingface_model_draft(
+    repo_id: str,
+    revision: str,
+    *,
+    fetch_json: JSONFetcher | None = None,
+    kv_bytes_per_token_per_device_override: int | None = None,
+    parameter_count_override: int | None = None,
+    resident_weight_bytes_override: int | None = None,
+    weight_dtype_override: str | None = None,
+) -> ModelResolutionDraft:
+    """Resolve config-level facts and return missing manifest inputs as data."""
+
+    repo, pinned = _validate_model_resolution_request(
+        repo_id,
+        revision,
+        kv_bytes_per_token_per_device_override,
+        parameter_count_override,
+        resident_weight_bytes_override,
+        weight_dtype_override,
+    )
+    fetch = _fetch_json if fetch_json is None else fetch_json
+    root = f"https://huggingface.co/{quote(repo, safe='/')}/resolve/{pinned}"
+    config = fetch(f"{root}/config.json")
+    quantization, _ = _quantization_config(config)
+    api_parameter_count: int | None = None
+    if parameter_count_override is None and config.get("num_parameters") is None and quantization is None:
+        model_info = fetch(f"https://huggingface.co/api/models/{quote(repo, safe='/')}/revision/{pinned}")
+        if str(model_info.get("sha", "")).lower() != pinned:
+            raise ContractError("Hugging Face model metadata does not match the pinned revision")
+        safetensors_info = model_info.get("safetensors")
+        if not isinstance(safetensors_info, Mapping):
+            raise ContractError("Hugging Face model metadata is missing SafeTensors parameter totals")
+        api_parameter_count = _positive_int("safetensors.total", safetensors_info.get("total"))
+    return inspect_huggingface_config(
+        repo,
+        pinned,
+        config,
+        kv_bytes_per_token_per_device_override=kv_bytes_per_token_per_device_override,
+        parameter_count_override=parameter_count_override,
+        resident_weight_bytes_override=resident_weight_bytes_override,
+        weight_dtype_override=weight_dtype_override,
+        api_parameter_count=api_parameter_count,
+    )
+
+
+def resolve_huggingface_manifest(
+    repo_id: str,
+    revision: str,
+    *,
+    fetch_json: JSONFetcher | None = None,
+    fetch_range: RangeFetcher | None = None,
+    cache_dir: Path | None = None,
+    kv_bytes_per_token_per_device_override: int | None = None,
+    parameter_count_override: int | None = None,
+    resident_weight_bytes_override: int | None = None,
+    weight_dtype_override: str | None = None,
+    inspect_safetensors_headers: bool = True,
+) -> ModelManifest:
+    """Resolve pinned metadata without downloading model weight shards."""
+
+    repo, pinned = _validate_model_resolution_request(
+        repo_id,
+        revision,
+        kv_bytes_per_token_per_device_override,
+        parameter_count_override,
+        resident_weight_bytes_override,
+        weight_dtype_override,
+    )
     cache_path = None
     if cache_dir is not None:
         cache_inputs = {
@@ -550,6 +902,7 @@ def resolve_huggingface_manifest(
             "kv_bytes_per_token_per_device_override": kv_bytes_per_token_per_device_override,
             "parameter_count_override": parameter_count_override,
             "resident_weight_bytes_override": resident_weight_bytes_override,
+            "weight_dtype_override": weight_dtype_override,
             "inspect_safetensors_headers": inspect_safetensors_headers,
         }
         cache_digest = hashlib.sha256(
@@ -566,22 +919,7 @@ def resolve_huggingface_manifest(
     config = fetch(f"{root}/config.json")
     resolved_parameter_count = parameter_count_override
     api_parameter_count: int | None = None
-    text, text_source = _text_config(config)
-    quantization, quantization_source = _quantization_config(config)
-    quantization_bits = (
-        None
-        if quantization is None or quantization_source is None
-        else _quantization_bits(quantization, quantization_source)[0]
-    )
-    kv_heads, _ = _config_int(
-        text,
-        "num_key_value_heads",
-        "n_head_kv",
-        "num_attention_heads",
-        source=text_source,
-    )
-    attention_heads, _ = _config_int(text, "num_attention_heads", "n_head", source=text_source)
-    attention_type = _attention_type(text, kv_heads, attention_heads)
+    quantization, _ = _quantization_config(config)
     if resolved_parameter_count is None and config.get("num_parameters") is None:
         if quantization is None:
             model_info = fetch(f"https://huggingface.co/api/models/{quote(repo, safe='/')}/revision/{pinned}")
@@ -592,18 +930,19 @@ def resolve_huggingface_manifest(
                 raise ContractError("Hugging Face model metadata is missing SafeTensors parameter totals")
             api_parameter_count = _positive_int("safetensors.total", safetensors_info.get("total"))
             resolved_parameter_count = api_parameter_count
-    required_inputs = _required_manifest_inputs(
-        parameter_count=(
-            resolved_parameter_count if resolved_parameter_count is not None else config.get("num_parameters")
-        ),
-        attention_type=attention_type,
-        quantization_present=quantization is not None,
-        quantization_bits=quantization_bits,
+    draft = inspect_huggingface_config(
+        repo,
+        pinned,
+        config,
         kv_bytes_per_token_per_device_override=kv_bytes_per_token_per_device_override,
+        parameter_count_override=parameter_count_override,
         resident_weight_bytes_override=resident_weight_bytes_override,
+        weight_dtype_override=weight_dtype_override,
+        api_parameter_count=api_parameter_count,
     )
-    if required_inputs:
-        raise ContractError("model manifest requires caller inputs: " + "; ".join(required_inputs))
+    if not draft.ready:
+        required_inputs = "; ".join(f"{item.path} ({item.reason})" for item in draft.unresolved)
+        raise ContractError("model manifest requires caller inputs: " + required_inputs)
     try:
         index: Mapping[str, Any] | None = fetch(f"{root}/model.safetensors.index.json")
     except urllib.error.HTTPError as exc:
@@ -643,6 +982,7 @@ def resolve_huggingface_manifest(
         parameter_count_override=resolved_parameter_count,
         safetensors_headers=headers,
         resident_weight_bytes_override=resident_weight_bytes_override,
+        weight_dtype_override=weight_dtype_override,
     )
     field_sources = dict(manifest.field_sources)
     evidence = manifest.evidence

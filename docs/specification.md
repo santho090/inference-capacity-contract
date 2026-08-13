@@ -151,6 +151,23 @@ This schema does not represent pipeline parallelism or separate prefill and
 decode worker pools. Adapters must reject those topologies rather than map them
 to TP/DP/EP defaults.
 
+## Model resolution
+
+`model-resolution-draft-1.0` is a config-level inspection result, not a model
+manifest and not a planning input. It records the immutable repository revision,
+discovered architecture and memory-related facts, field-level provenance,
+warnings, and unresolved inputs. `ready=true` means the config and supplied
+overrides contain the fields needed to proceed to SafeTensors inspection; it
+does not mean the model fits any hardware.
+
+`model-manifest-1.0` is the strict planning boundary. Creating it also requires
+SafeTensors metadata and provenance. Packed tensor elements are never used as
+logical model parameters. Mixed or unsupported weight layouts require measured
+resident bytes, and custom, MLA, or hybrid cache layouts require measured
+per-device KV bytes per token. A draft cannot be passed to `explore` or `plan`.
+Missing weight dtype is also unresolved; model resolution never defaults it to
+BF16.
+
 ## Provider planning
 
 `provider-inventory-1.0` records caller-supplied instance shapes. Price and
@@ -278,6 +295,8 @@ validated by the dependency-free Python parsers.
   configured-concurrency, and measured limits.
 - `recipe-draft-1.0` and `structural-recipe-audit-1.0`: partial import and
   topology/routing checks before model memory is known.
+- `model-resolution-draft-1.0`: config-derived model facts, provenance, and
+  unresolved inputs before weight metadata or runtime evidence is available.
 - `model-manifest-1.0` and `vllm-initialization-profile-1.0`: pinned static
   metadata and measured runtime memory facts.
 - `provider-inventory-1.0`, `runtime-inventory-1.0`, and

@@ -31,6 +31,7 @@ from inference_capacity_contract import (
     import_huggingface_manifest,
     import_llmd_values,
     import_vllm_initialization,
+    inspect_huggingface_config,
     plan,
     recommend_scale,
 )
@@ -56,6 +57,7 @@ class SchemaTests(unittest.TestCase):
         self.draft_schema = _read_schema("recipe-draft-1.0.schema.json")
         self.structural_audit_schema = _read_schema("structural-recipe-audit-1.0.schema.json")
         self.manifest_schema = _read_schema("model-manifest-1.0.schema.json")
+        self.model_resolution_schema = _read_schema("model-resolution-draft-1.0.schema.json")
         self.initialization_schema = _read_schema("vllm-initialization-profile-1.0.schema.json")
         self.provider_inventory_schema = _read_schema("provider-inventory-1.0.schema.json")
         self.runtime_inventory_schema = _read_schema("runtime-inventory-1.0.schema.json")
@@ -70,6 +72,7 @@ class SchemaTests(unittest.TestCase):
         Draft202012Validator.check_schema(self.draft_schema)
         Draft202012Validator.check_schema(self.structural_audit_schema)
         Draft202012Validator.check_schema(self.manifest_schema)
+        Draft202012Validator.check_schema(self.model_resolution_schema)
         Draft202012Validator.check_schema(self.initialization_schema)
         Draft202012Validator.check_schema(self.provider_inventory_schema)
         Draft202012Validator.check_schema(self.runtime_inventory_schema)
@@ -129,6 +132,22 @@ class SchemaTests(unittest.TestCase):
         manifest_exploration = explore(manifest, providers, runtimes, context_tokens=load.context_tokens).to_dict()
         Draft202012Validator(self.exploration_schema, registry=registry).validate(manifest_exploration)
         self.assertEqual(manifest_exploration["model_manifest"], manifest.to_dict())
+
+    def test_model_resolution_draft_document_validates(self) -> None:
+        draft = inspect_huggingface_config(
+            "example/model",
+            "a" * 40,
+            {
+                "num_hidden_layers": 2,
+                "num_key_value_heads": 1,
+                "num_attention_heads": 2,
+                "hidden_size": 128,
+                "max_position_embeddings": 1024,
+                "torch_dtype": "float16",
+            },
+        )
+
+        Draft202012Validator(self.model_resolution_schema).validate(draft.to_dict())
 
     def test_draft_manifest_and_initialization_documents_validate(self) -> None:
         values = json.loads(

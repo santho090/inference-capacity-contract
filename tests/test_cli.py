@@ -6,13 +6,53 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from inference_capacity_contract import import_huggingface_manifest
+from inference_capacity_contract import import_huggingface_manifest, inspect_huggingface_config
 from inference_capacity_contract.cli import main
 
 ROOT = Path(__file__).parents[1]
 
 
 class CliTests(unittest.TestCase):
+    def test_inspect_model_command_writes_unresolved_facts(self) -> None:
+        draft = inspect_huggingface_config(
+            "example/model",
+            "a" * 40,
+            {
+                "num_hidden_layers": 2,
+                "num_key_value_heads": 1,
+                "num_attention_heads": 2,
+                "hidden_size": 128,
+                "max_position_embeddings": 1024,
+                "torch_dtype": "float16",
+            },
+        )
+        with patch(
+            "inference_capacity_contract.cli.resolve_huggingface_model_draft",
+            return_value=draft,
+        ) as resolver:
+            with patch("sys.stdout") as stdout:
+                result = main(
+                    [
+                        "inspect-model",
+                        "--repo-id",
+                        "example/model",
+                        "--revision",
+                        "a" * 40,
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        resolver.assert_called_once_with(
+            "example/model",
+            "a" * 40,
+            kv_bytes_per_token_per_device_override=None,
+            parameter_count_override=None,
+            resident_weight_bytes_override=None,
+            weight_dtype_override=None,
+        )
+        written = "".join(call.args[0] for call in stdout.write.call_args_list)
+        self.assertEqual(json.loads(written), draft.to_dict())
+
     def test_resolve_model_command_writes_replayable_manifest(self) -> None:
         manifest = import_huggingface_manifest(
             "example/7b",
@@ -57,6 +97,7 @@ class CliTests(unittest.TestCase):
                 kv_bytes_per_token_per_device_override=None,
                 parameter_count_override=None,
                 resident_weight_bytes_override=None,
+                weight_dtype_override=None,
                 inspect_safetensors_headers=False,
             )
 

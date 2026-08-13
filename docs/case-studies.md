@@ -54,11 +54,12 @@ recipe. A real run still needs three values from authoritative evidence:
   and
 - per-device KV bytes per token from the hybrid cache layout.
 
-Until those values are supplied, `icc resolve-model` stops and lists the
-missing inputs. Once they are supplied, the same planner can test the real
+`icc inspect-model` returns the discovered fields and missing inputs as data.
+Until those values are supplied, strict `icc resolve-model` still refuses to
+write a manifest. Once they are supplied, the same planner can test the real
 recipe's memory, runtime concurrency, and llm-d flow limits. Throughput and
-latency sizing still needs a benchmark profile for the exact recipe
-fingerprint and operating point.
+latency sizing still needs a benchmark profile for the exact recipe fingerprint
+and operating point.
 
 ## DP4 layout on an eight-device host
 

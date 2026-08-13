@@ -19,6 +19,7 @@ from .importers import (
     import_vllm_initialization,
     materialize_recipe_draft,
     resolve_huggingface_manifest,
+    resolve_huggingface_model_draft,
 )
 from .inventory import MeasurementInventory, ProviderInventory, RuntimeInventory
 from .models import CapacityContract, HardwareInventory, HardwareSpec, ModelSpec, RuntimeVariant, WorkloadProfile
@@ -105,6 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     manifest.add_argument("--safetensors-index", required=True)
     manifest.add_argument("--kv-bytes-per-token-per-device", type=int)
     manifest.add_argument("--parameter-count", type=int)
+    manifest.add_argument("--resident-weight-bytes", type=int)
+    manifest.add_argument("--weight-dtype")
     manifest.add_argument("--output")
 
     resolve_model = sub.add_parser(
@@ -117,12 +120,25 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_model.add_argument("--kv-bytes-per-token-per-device", type=int)
     resolve_model.add_argument("--parameter-count", type=int)
     resolve_model.add_argument("--resident-weight-bytes", type=int)
+    resolve_model.add_argument("--weight-dtype")
     resolve_model.add_argument(
         "--inspect-safetensors-headers",
         action=argparse.BooleanOptionalAction,
         default=True,
     )
     resolve_model.add_argument("--output")
+
+    inspect_model = sub.add_parser(
+        "inspect-model",
+        help="inspect pinned Hugging Face config and report unresolved manifest inputs",
+    )
+    inspect_model.add_argument("--repo-id", required=True)
+    inspect_model.add_argument("--revision", required=True, help="immutable 40-character commit SHA")
+    inspect_model.add_argument("--kv-bytes-per-token-per-device", type=int)
+    inspect_model.add_argument("--parameter-count", type=int)
+    inspect_model.add_argument("--resident-weight-bytes", type=int)
+    inspect_model.add_argument("--weight-dtype")
+    inspect_model.add_argument("--output")
 
     initialization = sub.add_parser("import-vllm-init", help="normalize vLLM initialization memory evidence")
     initialization.add_argument("--input", required=True)
@@ -239,6 +255,8 @@ def main(argv: list[str] | None = None) -> int:
                 _read(args.safetensors_index),
                 kv_bytes_per_token_per_device_override=args.kv_bytes_per_token_per_device,
                 parameter_count_override=args.parameter_count,
+                resident_weight_bytes_override=args.resident_weight_bytes,
+                weight_dtype_override=args.weight_dtype,
             )
             _write(manifest.to_dict(), args.output)
         elif args.command == "resolve-model":
@@ -249,9 +267,20 @@ def main(argv: list[str] | None = None) -> int:
                 kv_bytes_per_token_per_device_override=args.kv_bytes_per_token_per_device,
                 parameter_count_override=args.parameter_count,
                 resident_weight_bytes_override=args.resident_weight_bytes,
+                weight_dtype_override=args.weight_dtype,
                 inspect_safetensors_headers=args.inspect_safetensors_headers,
             )
             _write(resolved.to_dict(), args.output)
+        elif args.command == "inspect-model":
+            model_draft = resolve_huggingface_model_draft(
+                args.repo_id,
+                args.revision,
+                kv_bytes_per_token_per_device_override=args.kv_bytes_per_token_per_device,
+                parameter_count_override=args.parameter_count,
+                resident_weight_bytes_override=args.resident_weight_bytes,
+                weight_dtype_override=args.weight_dtype,
+            )
+            _write(model_draft.to_dict(), args.output)
         elif args.command == "import-vllm-init":
             _write(import_vllm_initialization(_read(args.input), source=args.source).to_dict(), args.output)
         elif args.command == "materialize-recipe":

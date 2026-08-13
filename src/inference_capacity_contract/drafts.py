@@ -211,6 +211,18 @@ class UnresolvedFact:
     reason: str
     required_for: str
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.path, str) or not self.path or not isinstance(self.reason, str) or not self.reason:
+            raise ContractError("unresolved fact path and reason are required")
+        if not isinstance(self.required_for, str) or self.required_for not in {
+            "identity",
+            "memory",
+            "topology",
+            "routing",
+            "traffic",
+        }:
+            raise ContractError("unresolved fact required_for is unsupported")
+
     def to_dict(self) -> dict[str, str]:
         return {"path": self.path, "reason": self.reason, "required_for": self.required_for}
 
