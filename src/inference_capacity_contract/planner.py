@@ -8,6 +8,7 @@ from typing import Any
 
 from .arithmetic import ceil_div
 from .calculator import capacity_for
+from .importers import ModelManifest
 from .inventory import (
     MeasurementInventory,
     ProviderInstanceSpec,
@@ -91,7 +92,7 @@ class SolverCandidate:
     rejection_reasons: tuple[str, ...]
     warnings: tuple[str, ...]
     contract: CapacityContract | None
-    audit: RecipeAudit | None
+    single_group_audit: RecipeAudit | None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -114,7 +115,7 @@ class SolverCandidate:
             "rejection_reasons": list(self.rejection_reasons),
             "warnings": list(self.warnings),
             "contract": None if self.contract is None else self.contract.to_dict(),
-            "audit": None if self.audit is None else self.audit.to_dict(),
+            "single_group_audit": (None if self.single_group_audit is None else self.single_group_audit.to_dict()),
         }
 
 
@@ -122,6 +123,7 @@ class SolverCandidate:
 class ExplorationResult:
     schema_version: str
     model: ModelSpec
+    model_manifest: ModelManifest | None
     context_tokens: int
     candidates: tuple[SolverCandidate, ...]
     assumptions: tuple[str, ...]
@@ -129,11 +131,14 @@ class ExplorationResult:
     def __post_init__(self) -> None:
         if self.schema_version != "capacity-exploration-1.0":
             raise ContractError("unsupported capacity exploration schema_version")
+        if self.model_manifest is not None and self.model_manifest.model != self.model:
+            raise ContractError("model_manifest does not match model")
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
             "model": self.model.to_dict(),
+            "model_manifest": None if self.model_manifest is None else self.model_manifest.to_dict(),
             "context_tokens": self.context_tokens,
             "candidates": [item.to_dict() for item in self.candidates],
             "assumptions": list(self.assumptions),
@@ -144,6 +149,7 @@ class ExplorationResult:
 class CapacityPlan:
     schema_version: str
     model: ModelSpec
+    model_manifest: ModelManifest | None
     load: LoadRequirement
     objective: PlanningObjective
     candidates: tuple[SolverCandidate, ...]
@@ -152,11 +158,14 @@ class CapacityPlan:
     def __post_init__(self) -> None:
         if self.schema_version != "capacity-plan-1.0":
             raise ContractError("unsupported capacity plan schema_version")
+        if self.model_manifest is not None and self.model_manifest.model != self.model:
+            raise ContractError("model_manifest does not match model")
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
             "model": self.model.to_dict(),
+            "model_manifest": None if self.model_manifest is None else self.model_manifest.to_dict(),
             "load": self.load.to_dict(),
             "objective": self.objective.value,
             "candidates": [item.to_dict() for item in self.candidates],
@@ -170,7 +179,7 @@ class _Evaluation:
     runtime_option: RuntimeOption
     contract: CapacityContract | None
     recipe: ServingRecipe | None
-    audit: RecipeAudit | None
+    single_group_audit: RecipeAudit | None
     sequences_per_replica: int
     replicas_per_instance: int
     warnings: tuple[str, ...]
@@ -182,7 +191,7 @@ class _Evaluation:
 
 
 def explore(
-    model: ModelSpec,
+    model: ModelSpec | ModelManifest,
     providers: ProviderInventory,
     runtimes: RuntimeInventory,
     *,
@@ -190,16 +199,21 @@ def explore(
 ) -> ExplorationResult:
     """Compare context and sequence capacity without predicting traffic."""
 
+    model_spec, manifest = _model_input(model)
     if not isinstance(context_tokens, int) or isinstance(context_tokens, bool) or context_tokens <= 0:
         raise ContractError("context_tokens must be a positive integer")
     candidates = [
-        _exploration_candidate(_evaluate(model, provider, runtime, context_tokens), context_tokens)
+        _exploration_candidate(
+            _evaluate(model_spec, provider, runtime, context_tokens, manifest),
+            context_tokens,
+        )
         for provider in providers.items
         for runtime in runtimes.items
     ]
     return ExplorationResult(
         "capacity-exploration-1.0",
-        model,
+        model_spec,
+        manifest,
         context_tokens,
         _rank(candidates, None),
         (
@@ -212,7 +226,7 @@ def explore(
 
 
 def plan(
-    model: ModelSpec,
+    model: ModelSpec | ModelManifest,
     providers: ProviderInventory,
     runtimes: RuntimeInventory,
     load: LoadRequirement,
@@ -222,6 +236,7 @@ def plan(
 ) -> CapacityPlan:
     """Size one model for each supplied provider and runtime option."""
 
+    model_spec, manifest = _model_input(model)
     try:
         chosen_objective = PlanningObjective(objective)
     except (TypeError, ValueError) as exc:
@@ -238,7 +253,7 @@ def plan(
 
     candidates = [
         _plan_candidate(
-            _evaluate(model, provider, runtime, load.context_tokens),
+            _evaluate(model_spec, provider, runtime, load.context_tokens, manifest),
             load,
             measurements,
         )
@@ -247,7 +262,8 @@ def plan(
     ]
     return CapacityPlan(
         "capacity-plan-1.0",
-        model,
+        model_spec,
+        manifest,
         load,
         chosen_objective,
         _rank(candidates, chosen_objective),
@@ -265,6 +281,7 @@ def _evaluate(
     provider: ProviderInstanceSpec,
     runtime_option: RuntimeOption,
     context_tokens: int,
+    manifest: ModelManifest | None,
 ) -> _Evaluation:
     runtime = runtime_option.runtime
     tp = runtime.tensor_parallel_size
@@ -305,9 +322,9 @@ def _evaluate(
             contract,
         )
 
-    recipe = _recipe(model, provider, runtime_option, contract)
-    baseline_load = LoadRequirement("load-requirement-1.0", context_tokens)
-    audit = audit_recipe(recipe, baseline_load)
+    recipe = _recipe(model, provider, runtime_option, contract, manifest)
+    single_group_load = LoadRequirement("load-requirement-1.0", context_tokens)
+    audit = audit_recipe(recipe, single_group_load)
     configuration_issues = tuple(audit.issues)
     if audit.status == AuditStatus.INVALID or configuration_issues:
         return _rejected(
@@ -345,11 +362,20 @@ def _evaluate(
     )
 
 
+def _model_input(model: ModelSpec | ModelManifest) -> tuple[ModelSpec, ModelManifest | None]:
+    if isinstance(model, ModelManifest):
+        return model.model, model
+    if isinstance(model, ModelSpec):
+        return model, None
+    raise ContractError("model must be a ModelSpec or ModelManifest")
+
+
 def _recipe(
     model: ModelSpec,
     provider: ProviderInstanceSpec,
     runtime_option: RuntimeOption,
     contract: CapacityContract,
+    manifest: ModelManifest | None,
 ) -> ServingRecipe:
     runtime = runtime_option.runtime
     tp = runtime.tensor_parallel_size
@@ -369,6 +395,7 @@ def _recipe(
         llmd=runtime_option.routing,
         configured_groups=1,
         evidence=(
+            *(() if manifest is None else manifest.evidence),
             EvidenceRecord(
                 evidence_id=f"provider-{provider.inventory_key}",
                 kind=EvidenceKind.REPORTED,
@@ -409,7 +436,7 @@ def _exploration_candidate(evaluation: _Evaluation, context_tokens: int) -> Solv
         rejection_reasons=evaluation.rejection_reasons,
         warnings=evaluation.warnings,
         contract=evaluation.contract,
-        audit=evaluation.audit,
+        single_group_audit=evaluation.single_group_audit,
     )
 
 
@@ -486,9 +513,9 @@ def _plan_candidate(
         hourly_cost=hourly_cost,
         cost_currency=provider.price_currency,
         rejection_reasons=rejection_reasons,
-        warnings=tuple((*warnings, *audit.warnings)),
+        warnings=tuple(dict.fromkeys((*warnings, *audit.warnings))),
         contract=evaluation.contract,
-        audit=audit,
+        single_group_audit=audit,
     )
 
 

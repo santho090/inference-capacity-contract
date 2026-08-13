@@ -4,11 +4,62 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from inference_capacity_contract import import_huggingface_manifest
+from inference_capacity_contract.cli import main
 
 ROOT = Path(__file__).parents[1]
 
 
 class CliTests(unittest.TestCase):
+    def test_resolve_model_command_writes_replayable_manifest(self) -> None:
+        manifest = import_huggingface_manifest(
+            "example/7b",
+            "a" * 40,
+            {
+                "num_hidden_layers": 2,
+                "num_key_value_heads": 1,
+                "num_attention_heads": 2,
+                "hidden_size": 128,
+                "max_position_embeddings": 1024,
+                "torch_dtype": "float16",
+                "num_parameters": 1024,
+            },
+            {"metadata": {"total_size": 2048}},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "manifest.json"
+            with patch(
+                "inference_capacity_contract.cli.resolve_huggingface_manifest",
+                return_value=manifest,
+            ) as resolver:
+                result = main(
+                    [
+                        "resolve-model",
+                        "--repo-id",
+                        "example/7b",
+                        "--revision",
+                        "a" * 40,
+                        "--cache-dir",
+                        directory,
+                        "--no-inspect-safetensors-headers",
+                        "--output",
+                        str(output),
+                    ]
+                )
+            self.assertEqual(result, 0)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), manifest.to_dict())
+            resolver.assert_called_once_with(
+                "example/7b",
+                "a" * 40,
+                cache_dir=Path(directory),
+                kv_bytes_per_token_per_device_override=None,
+                parameter_count_override=None,
+                resident_weight_bytes_override=None,
+                inspect_safetensors_headers=False,
+            )
+
     def test_explore_and_plan_across_provider_inventory(self) -> None:
         fixtures = ROOT / "docs" / "fixtures"
         explore_result = subprocess.run(
@@ -68,8 +119,8 @@ class CliTests(unittest.TestCase):
                 "-m",
                 "inference_capacity_contract",
                 "plan-providers",
-                "--model",
-                str(fixtures / "model-long-context-moe.json"),
+                "--manifest",
+                str(fixtures / "model-manifest-long-context.json"),
                 "--providers",
                 str(fixtures / "provider-inventory-long-context.json"),
                 "--runtimes",
@@ -85,9 +136,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(long_context.returncode, 0, long_context.stderr)
         long_context_plan = json.loads(long_context.stdout)
         candidate = long_context_plan["candidates"][0]
-        self.assertEqual(candidate["audit"]["sequence_capacity_limits"]["llmd_flow_control"], 2)
+        self.assertEqual(long_context_plan["model_manifest"]["schema_version"], "model-manifest-1.0")
+        self.assertEqual(candidate["single_group_audit"]["sequence_capacity_limits"]["llmd_flow_control"], 2)
+        self.assertEqual(candidate["single_group_audit"]["status"], "insufficient")
         self.assertEqual(candidate["resource_claim"]["required_instances"], 19)
         self.assertEqual(candidate["resource_claim"]["serving_devices"], 152)
+        self.assertTrue(any("not divisible" in warning for warning in candidate["warnings"]))
 
     def test_plan_validate_and_export(self) -> None:
         gib = 1024**3

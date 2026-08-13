@@ -195,6 +195,76 @@ class ModelManifestImporterTests(unittest.TestCase):
         self.assertEqual(manifest.model.weight_dtype, "int4")
         self.assertEqual(manifest.model.parameter_count, 1000)
 
+    def test_resolver_uses_pinned_api_parameter_total_for_unquantized_models(self) -> None:
+        calls: list[str] = []
+
+        def fetch(url: str) -> dict[str, object]:
+            calls.append(url)
+            if url.endswith("config.json"):
+                return {
+                    "num_hidden_layers": 2,
+                    "num_key_value_heads": 1,
+                    "num_attention_heads": 2,
+                    "hidden_size": 128,
+                    "max_position_embeddings": 1024,
+                    "torch_dtype": "float16",
+                }
+            if "/api/models/" in url:
+                return {
+                    "sha": PINNED_REVISION,
+                    "safetensors": {"total": 1024},
+                }
+            return {"metadata": {"total_size": 2048}}
+
+        manifest = resolve_huggingface_manifest(
+            "example/7b",
+            PINNED_REVISION,
+            fetch_json=fetch,
+            inspect_safetensors_headers=False,
+        )
+
+        self.assertEqual(manifest.model.parameter_count, 1024)
+        self.assertEqual(manifest.field_sources["parameter_count"], "huggingface-api.safetensors.total")
+        self.assertEqual(manifest.evidence[-1].metrics["parameter_count"], 1024)
+        self.assertIn("/api/models/", manifest.evidence[-1].source)
+        self.assertEqual(len(calls), 3)
+
+        def mismatched(url: str) -> dict[str, object]:
+            if url.endswith("config.json"):
+                return {
+                    "num_hidden_layers": 2,
+                    "num_key_value_heads": 1,
+                    "num_attention_heads": 2,
+                    "hidden_size": 128,
+                    "max_position_embeddings": 1024,
+                    "torch_dtype": "float16",
+                }
+            return {"sha": "b" * 40, "safetensors": {"total": 1024}}
+
+        with self.assertRaisesRegex(ContractError, "pinned revision"):
+            resolve_huggingface_manifest(
+                "example/7b",
+                PINNED_REVISION,
+                fetch_json=mismatched,
+                inspect_safetensors_headers=False,
+            )
+
+        with self.assertRaisesRegex(ContractError, "quantized models require"):
+            resolve_huggingface_manifest(
+                "example/quantized",
+                PINNED_REVISION,
+                fetch_json=lambda _: {
+                    "num_hidden_layers": 2,
+                    "num_key_value_heads": 1,
+                    "num_attention_heads": 2,
+                    "hidden_size": 128,
+                    "max_position_embeddings": 1024,
+                    "torch_dtype": "float16",
+                    "quantization_config": {"bits": 4},
+                },
+                inspect_safetensors_headers=False,
+            )
+
     def test_resolver_reads_only_safetensors_header_ranges_for_tensor_metadata(self) -> None:
         header_document = {"weight": {"dtype": "F16", "shape": [10, 20], "data_offsets": [0, 400]}}
         encoded = json.dumps(header_document, separators=(",", ":")).encode()
@@ -231,6 +301,54 @@ class ModelManifestImporterTests(unittest.TestCase):
         self.assertEqual(manifest.model.parameter_count, 200)
         self.assertEqual(manifest.tensor_element_count, 200)
         self.assertEqual(ranges, [(0, 7), (8, 8 + len(encoded) - 1)])
+
+    def test_resolver_supports_one_safetensors_file_without_an_index(self) -> None:
+        header_document = {"weight": {"dtype": "F16", "shape": [10, 20], "data_offsets": [0, 400]}}
+        encoded = json.dumps(header_document, separators=(",", ":")).encode()
+        file_prefix = struct.pack("<Q", len(encoded)) + encoded
+        ranges: list[tuple[int, int]] = []
+
+        def fetch_json(url: str) -> dict[str, object]:
+            if url.endswith("config.json"):
+                return {
+                    "num_hidden_layers": 2,
+                    "num_key_value_heads": 1,
+                    "num_attention_heads": 2,
+                    "hidden_size": 128,
+                    "max_position_embeddings": 1024,
+                    "torch_dtype": "float16",
+                    "num_parameters": 200,
+                }
+            if url.endswith("model.safetensors.index.json"):
+                raise FileNotFoundError
+            self.fail(f"unexpected metadata request: {url}")
+
+        def fetch_range(url: str, start: int, end: int) -> bytes:
+            self.assertTrue(url.endswith("/model.safetensors"))
+            ranges.append((start, end))
+            return file_prefix[start : end + 1]
+
+        manifest = resolve_huggingface_manifest(
+            "example/single-file",
+            PINNED_REVISION,
+            fetch_json=fetch_json,
+            fetch_range=fetch_range,
+        )
+
+        self.assertEqual(manifest.artifact_bytes, 400)
+        self.assertEqual(manifest.tensor_element_count, 200)
+        self.assertEqual(manifest.field_sources["artifact_bytes"], "model.safetensors.header.data_offsets")
+        self.assertEqual(manifest.evidence[0].scope, "config.json and model.safetensors header metadata")
+        self.assertEqual(ranges, [(0, 7), (8, 8 + len(encoded) - 1)])
+
+        with self.assertRaisesRegex(ContractError, "requires header inspection"):
+            resolve_huggingface_manifest(
+                "example/single-file",
+                PINNED_REVISION,
+                fetch_json=fetch_json,
+                fetch_range=fetch_range,
+                inspect_safetensors_headers=False,
+            )
 
     def test_parses_safetensors_headers_without_tensor_payloads(self) -> None:
         document = {

@@ -171,6 +171,12 @@ instance packing, price, and availability to each homogeneous candidate. One
 TP replica must fit within one provider instance; the current solver does not
 build a tensor-parallel replica across instances.
 
+In a capacity plan, candidate `status` applies to the proposed resource claim.
+`single_group_audit` applies the requested load to one generated serving group,
+which is the baseline used to derive the resource claim. Keeping those scopes
+separate avoids presenting a scalable plan and its one-group shortfall as
+contradictory results.
+
 A resource claim distinguishes:
 
 - serving replicas and devices used by those replicas;
@@ -186,6 +192,10 @@ or runtime option is never copied to another candidate.
 Lowest-cost ranking is deterministic only within one currency. Mixed-currency
 inventories are rejected unless the caller chooses a non-cost objective or
 normalizes the prices before calling the library.
+
+When the caller supplies a `model-manifest-1.0`, exploration and planning keep
+the full manifest at the result root and attach its evidence to each generated
+recipe. Supplying a bare `ModelSpec` leaves `model_manifest` null.
 
 ## Partial recipe import
 
@@ -211,12 +221,26 @@ case.
 
 `model-manifest-1.0` records immutable model facts, serialized artifact bytes,
 and field-level provenance. Serialized SafeTensors bytes are not resident GPU
-bytes. SafeTensors shard headers provide exact tensor shapes without requiring
-the tensor payloads. Their stored tensor element count is not treated as the
-model's logical parameter count because packed quantization and scale tensors
-break that equivalence. A quantized manifest needs the logical parameter count
-from the config or caller; the resolver does not derive it from artifact size,
-stored shapes, or nominal dtype.
+bytes. SafeTensors shard headers, or the header from one `model.safetensors`
+file, provide exact tensor shapes without requiring tensor payloads. Their
+stored tensor element count is not treated as the model's logical parameter
+count because packed quantization and scale tensors break that equivalence. A
+quantized manifest needs the logical parameter count from the config or caller;
+the resolver does not derive it from artifact size, stored shapes, or nominal
+dtype. For a single-file artifact, the manifest identifies header data offsets
+as the artifact-byte source instead of claiming SafeTensors index metadata.
+
+When an unquantized config omits its parameter count, the online resolver may
+use `safetensors.total` from model metadata whose returned commit matches the
+requested immutable revision. The manifest records that exact source. The
+fallback is forbidden for quantized models because packed tensors and scale
+state break the equivalence.
+
+The provider planner accepts either the manifest or its contained `ModelSpec`.
+Passing the manifest avoids a manual translation step and preserves the same
+model identity, quantization, context, and KV-layout override. Model resolution
+remains optional; cached manifests and caller-fetched metadata support fully
+offline planning.
 
 `vllm-initialization-profile-1.0` carries measured per-device resident weights,
 runtime reserve, activation reserve, KV bytes/token, and KV token capacity. Its

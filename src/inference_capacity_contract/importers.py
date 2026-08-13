@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import struct
+import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -331,7 +332,7 @@ class RangeFetcher(Protocol):
 
 
 def _fetch_json(url: str) -> Mapping[str, Any]:
-    request = urllib.request.Request(url, headers={"User-Agent": "inference-capacity-contract/0.4"})
+    request = urllib.request.Request(url, headers={"User-Agent": "inference-capacity-contract/0.5"})
     with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 - fixed HTTPS host below
         _validate_huggingface_url(response.geturl())
         body = response.read(16 * 1024 * 1024 + 1)
@@ -354,7 +355,7 @@ def _validate_huggingface_url(url: str) -> None:
 def _fetch_range(url: str, start: int, end: int) -> bytes:
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "inference-capacity-contract/0.4", "Range": f"bytes={start}-{end}"},
+        headers={"User-Agent": "inference-capacity-contract/0.5", "Range": f"bytes={start}-{end}"},
     )
     with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 - fixed HTTPS host below
         _validate_huggingface_url(response.geturl())
@@ -363,6 +364,40 @@ def _fetch_range(url: str, start: int, end: int) -> bytes:
     if len(body) != expected:
         raise ContractError(f"range response returned {len(body)} bytes; expected {expected}")
     return bytes(body)
+
+
+def _fetch_safetensors_header(fetch: RangeFetcher, url: str) -> bytes:
+    prefix = fetch(url, 0, 7)
+    if len(prefix) != 8:
+        raise ContractError("SafeTensors length prefix must contain 8 bytes")
+    header_length = struct.unpack("<Q", prefix)[0]
+    if header_length <= 0 or header_length > 16 * 1024 * 1024:
+        raise ContractError("SafeTensors header length must be in (0, 16 MiB]")
+    return prefix + fetch(url, 8, 8 + header_length - 1)
+
+
+def _single_safetensors_index(header: bytes) -> Mapping[str, Any]:
+    document = parse_safetensors_header(header)
+    weight_map: dict[str, str] = {}
+    payload_bytes = 0
+    for name, value in document.items():
+        if name == "__metadata__":
+            continue
+        if not isinstance(value, Mapping):
+            raise ContractError(f"SafeTensors tensor {name!r} must be an object")
+        offsets = value.get("data_offsets")
+        if (
+            not isinstance(offsets, list)
+            or len(offsets) != 2
+            or any(not isinstance(item, int) or isinstance(item, bool) or item < 0 for item in offsets)
+            or offsets[0] > offsets[1]
+        ):
+            raise ContractError(f"SafeTensors tensor {name!r} has invalid data_offsets")
+        payload_bytes = max(payload_bytes, offsets[1])
+        weight_map[str(name)] = "model.safetensors"
+    if not weight_map or payload_bytes <= 0:
+        raise ContractError("model.safetensors contains no tensor payloads")
+    return {"metadata": {"total_size": payload_bytes}, "weight_map": weight_map}
 
 
 def resolve_huggingface_manifest(
@@ -386,7 +421,7 @@ def resolve_huggingface_manifest(
     cache_path = None
     if cache_dir is not None:
         cache_inputs = {
-            "cache_version": "model-manifest-cache-1.0",
+            "cache_version": "model-manifest-cache-1.2",
             "repo_id": repo,
             "revision": pinned,
             "kv_bytes_per_token_per_device_override": kv_bytes_per_token_per_device_override,
@@ -406,37 +441,78 @@ def resolve_huggingface_manifest(
     fetch = _fetch_json if fetch_json is None else fetch_json
     root = f"https://huggingface.co/{quote(repo, safe='/')}/resolve/{pinned}"
     config = fetch(f"{root}/config.json")
-    index = fetch(f"{root}/model.safetensors.index.json")
+    resolved_parameter_count = parameter_count_override
+    api_parameter_count: int | None = None
+    if resolved_parameter_count is None and config.get("num_parameters") is None:
+        if isinstance(config.get("quantization_config"), Mapping):
+            raise ContractError("quantized models require parameter_count_override or config.num_parameters")
+        model_info = fetch(f"https://huggingface.co/api/models/{quote(repo, safe='/')}/revision/{pinned}")
+        if str(model_info.get("sha", "")).lower() != pinned:
+            raise ContractError("Hugging Face model metadata does not match the pinned revision")
+        safetensors_info = model_info.get("safetensors")
+        if not isinstance(safetensors_info, Mapping):
+            raise ContractError("Hugging Face model metadata is missing SafeTensors parameter totals")
+        api_parameter_count = _positive_int("safetensors.total", safetensors_info.get("total"))
+        resolved_parameter_count = api_parameter_count
+    try:
+        index: Mapping[str, Any] | None = fetch(f"{root}/model.safetensors.index.json")
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+        index = None
+    except FileNotFoundError:
+        index = None
+    range_fetch = _fetch_range if fetch_range is None else fetch_range
     headers: dict[str, bytes] | None = None
-    if inspect_safetensors_headers:
+    single_file = index is None
+    if index is None:
+        if not inspect_safetensors_headers:
+            raise ContractError("a single-file SafeTensors model requires header inspection")
+        shard = "model.safetensors"
+        header = _fetch_safetensors_header(range_fetch, f"{root}/{shard}")
+        index = _single_safetensors_index(header)
+        headers = {shard: header}
+    elif inspect_safetensors_headers:
         weight_map = index.get("weight_map")
         if not isinstance(weight_map, Mapping) or not weight_map:
             raise ContractError("SafeTensors index weight_map is required to resolve tensor headers")
         shards = sorted({value for value in weight_map.values() if isinstance(value, str) and value})
         if not shards:
             raise ContractError("SafeTensors index weight_map contains no shard names")
-        range_fetch = _fetch_range if fetch_range is None else fetch_range
         headers = {}
         for shard in shards:
             shard_url = f"{root}/{quote(shard, safe='.-_')}"
-            prefix = range_fetch(shard_url, 0, 7)
-            if len(prefix) != 8:
-                raise ContractError("SafeTensors length prefix must contain 8 bytes")
-            header_length = struct.unpack("<Q", prefix)[0]
-            if header_length <= 0 or header_length > 16 * 1024 * 1024:
-                raise ContractError("SafeTensors header length must be in (0, 16 MiB]")
-            header_json = range_fetch(shard_url, 8, 8 + header_length - 1)
-            headers[shard] = prefix + header_json
+            headers[shard] = _fetch_safetensors_header(range_fetch, shard_url)
+    assert index is not None
     manifest = import_huggingface_manifest(
         repo,
         pinned,
         config,
         index,
         kv_bytes_per_token_per_device_override=kv_bytes_per_token_per_device_override,
-        parameter_count_override=parameter_count_override,
+        parameter_count_override=resolved_parameter_count,
         safetensors_headers=headers,
         resident_weight_bytes_override=resident_weight_bytes_override,
     )
+    field_sources = dict(manifest.field_sources)
+    evidence = manifest.evidence
+    if single_file:
+        field_sources["artifact_bytes"] = "model.safetensors.header.data_offsets"
+        evidence = tuple(replace(item, scope="config.json and model.safetensors header metadata") for item in evidence)
+    if api_parameter_count is not None:
+        field_sources["parameter_count"] = "huggingface-api.safetensors.total"
+        evidence = (
+            *evidence,
+            EvidenceRecord(
+                evidence_id=f"hf-model-info-{pinned}",
+                kind=EvidenceKind.REPORTED,
+                source=f"https://huggingface.co/api/models/{repo}/revision/{pinned}",
+                scope="pinned model metadata",
+                metrics={"revision": pinned, "parameter_count": api_parameter_count},
+            ),
+        )
+    if single_file or api_parameter_count is not None:
+        manifest = replace(manifest, field_sources=field_sources, evidence=evidence)
     if cache_path is not None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         manifest.write(cache_path)

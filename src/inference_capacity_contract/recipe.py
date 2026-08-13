@@ -698,6 +698,12 @@ def audit_recipe(recipe: ServingRecipe, load: LoadRequirement) -> RecipeAudit:
         )
     if llmd.kv_block_size_tokens is not None and llmd.kv_block_size_tokens != recipe.runtime.block_size_tokens:
         configuration_issues.append("llm-d and vLLM block sizes do not match")
+    if (
+        llmd.flow_control_token_limit is not None
+        and llmd.kv_block_size_tokens is not None
+        and llmd.flow_control_token_limit % llmd.kv_block_size_tokens
+    ):
+        warnings.append("llm-d flow-control token limit is not divisible by the declared KV block size")
     if llmd.precise_prefix_routing and llmd.kv_block_size_tokens is None:
         configuration_issues.append("precise prefix routing is missing its KV block size")
     if llmd.flow_control_token_limit is not None and llmd.flow_control_token_limit > kv_tokens_per_group:

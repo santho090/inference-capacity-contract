@@ -14,6 +14,20 @@
 - Reports whole-instance allocation, serving and idle devices, cost currency,
   point-in-time availability, and candidate-specific rejection reasons.
 - Refuses lowest-cost ranking when supplied prices use different currencies.
+- Lets `explore` and `plan` consume replayable model manifests directly.
+- Adds `icc resolve-model` for optional pinned public-model metadata resolution
+  with offline cache replay.
+- Uses revision-bound SafeTensors parameter totals when an unquantized config
+  omits its logical parameter count.
+- Resolves both sharded SafeTensors indexes and single-file
+  `model.safetensors` artifacts by reading headers only.
+- Keeps a supplied model manifest and its evidence in exploration and planning
+  results.
+- Names the nested candidate check `single_group_audit` so it cannot be
+  confused with the proposed multi-group plan.
+- Carries non-aligned llm-d flow-control warnings into provider plans.
+- Records single-file artifact bytes as SafeTensors header-offset evidence,
+  rather than index metadata.
 
 ## 0.4.0
 

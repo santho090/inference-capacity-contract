@@ -16,6 +16,7 @@ from inference_capacity_contract import (
     LoadRequirement,
     MeasuredGroupProfile,
     MeasurementInventory,
+    ModelManifest,
     ModelSpec,
     PlanningObjective,
     ProviderInventory,
@@ -107,6 +108,7 @@ class SchemaTests(unittest.TestCase):
             self.provider_inventory_schema,
             self.runtime_inventory_schema,
             self.measurement_inventory_schema,
+            self.manifest_schema,
             self.exploration_schema,
             self.plan_schema,
         ):
@@ -119,6 +121,14 @@ class SchemaTests(unittest.TestCase):
         )
         Draft202012Validator(self.exploration_schema, registry=registry).validate(exploration)
         Draft202012Validator(self.plan_schema, registry=registry).validate(capacity_plan)
+
+        manifest = ModelManifest.from_dict(
+            json.loads((ROOT / "docs" / "fixtures" / "model-manifest-long-context.json").read_text(encoding="utf-8"))
+        )
+        Draft202012Validator(self.manifest_schema, registry=registry).validate(manifest.to_dict())
+        manifest_exploration = explore(manifest, providers, runtimes, context_tokens=load.context_tokens).to_dict()
+        Draft202012Validator(self.exploration_schema, registry=registry).validate(manifest_exploration)
+        self.assertEqual(manifest_exploration["model_manifest"], manifest.to_dict())
 
     def test_draft_manifest_and_initialization_documents_validate(self) -> None:
         values = json.loads(

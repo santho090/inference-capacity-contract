@@ -50,14 +50,17 @@ to pinned manifests that can be replayed offline.
 Building blocks now available: caller-supplied provider and runtime
 inventories, shared `explore` and `plan` evaluation, whole-instance resource
 claims, price and availability snapshots, candidate rejection reasons, and
-flow-aware recipe audits.
+flow-aware recipe audits. Both planner APIs accept cached model manifests
+directly, and the CLI can optionally resolve a pinned public model before
+planning offline.
 
 - accept normalized user-supplied provider inventories;
 - add a versioned vLLM runtime adapter;
 - expose `explore` and `plan` over the same candidate evaluator;
 - return ranked plans, rejected-candidate reasons, uncertainty, and resource
-  claims; and
-- reuse the recipe auditor for every proposed candidate; and
+  claims;
+- reuse the recipe auditor for every proposed candidate;
+- preserve model-manifest evidence in every generated plan; and
 - property-test monotonicity and forward/reverse consistency.
 
 This phase is done when one resolved model can be checked against multiple

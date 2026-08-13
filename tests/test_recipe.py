@@ -254,6 +254,7 @@ class RecipeAuditTests(unittest.TestCase):
         self.assertEqual(result.required_devices, 152)
         self.assertEqual(result.additional_groups_needed, 18)
         self.assertEqual(result.additional_devices_needed, 144)
+        self.assertTrue(any("not divisible" in warning for warning in result.warnings))
 
     def test_zero_flow_capacity_has_no_finite_group_count(self) -> None:
         recipe = _tp_recipe(

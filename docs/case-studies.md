@@ -26,7 +26,7 @@ The complete sanitized inputs can also be sent through the provider planner:
 
 ```bash
 icc plan-providers \
-  --model docs/fixtures/model-long-context-moe.json \
+  --manifest docs/fixtures/model-manifest-long-context.json \
   --providers docs/fixtures/provider-inventory-long-context.json \
   --runtimes docs/fixtures/runtime-inventory-long-context.json \
   --load docs/fixtures/load-context-concurrency.json

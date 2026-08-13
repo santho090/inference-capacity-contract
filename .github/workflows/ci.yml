@@ -38,6 +38,7 @@ jobs:
           /tmp/icc-venv/bin/python -m pip install --no-deps dist/*.whl
           /tmp/icc-venv/bin/python -c "import inference_capacity_contract; print(inference_capacity_contract.__all__)"
           /tmp/icc-venv/bin/icc --help
+          /tmp/icc-venv/bin/icc resolve-model --help
           /tmp/icc-venv/bin/icc plan \
             --model docs/fixtures/model-7b.json \
             --hardware docs/fixtures/hardware-h100.json \
@@ -88,3 +89,9 @@ jobs:
             --runtimes docs/fixtures/runtime-inventory.json \
             --load docs/fixtures/load-provider-plan.json \
             --output /tmp/icc-provider-plan.json
+          /tmp/icc-venv/bin/icc plan-providers \
+            --manifest docs/fixtures/model-manifest-long-context.json \
+            --providers docs/fixtures/provider-inventory-long-context.json \
+            --runtimes docs/fixtures/runtime-inventory-long-context.json \
+            --load docs/fixtures/load-context-concurrency.json \
+            --output /tmp/icc-long-context-plan.json

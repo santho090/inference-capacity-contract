@@ -5,6 +5,7 @@ from dataclasses import replace
 
 from inference_capacity_contract import (
     RECIPE_VARIANT_FINGERPRINT_VERSION,
+    AuditStatus,
     CandidateStatus,
     ContractError,
     EvidenceKind,
@@ -21,6 +22,7 @@ from inference_capacity_contract import (
     RuntimeOption,
     RuntimeVariant,
     explore,
+    import_huggingface_manifest,
     plan,
 )
 
@@ -192,6 +194,41 @@ class InventoryTests(unittest.TestCase):
 
 
 class PlannerTests(unittest.TestCase):
+    def test_planner_accepts_a_replayable_model_manifest(self) -> None:
+        manifest = import_huggingface_manifest(
+            "example/7b",
+            "a" * 40,
+            {
+                "num_hidden_layers": 32,
+                "num_key_value_heads": 8,
+                "num_attention_heads": 8,
+                "hidden_size": 1024,
+                "max_position_embeddings": 8192,
+                "torch_dtype": "bfloat16",
+                "num_parameters": 7_000_000_000,
+            },
+            {"metadata": {"total_size": 14_000_000_000}},
+        )
+
+        result = explore(
+            manifest,
+            _providers(_provider()),
+            _runtimes(_runtime()),
+            context_tokens=8192,
+        )
+
+        self.assertEqual(result.model, manifest.model)
+        self.assertEqual(result.model_manifest, manifest)
+        self.assertEqual(result.candidates[0].status, CandidateStatus.FITS)
+        self.assertIn(manifest.evidence[0], result.candidates[0].single_group_audit.recipe.evidence)  # type: ignore[union-attr]
+
+        planned = plan(manifest, _providers(_provider()), _runtimes(_runtime()), _load())
+        self.assertEqual(planned.model_manifest, manifest)
+        with self.assertRaisesRegex(ContractError, "model_manifest does not match model"):
+            replace(result, model=_model(revision="sha256:other"))
+        with self.assertRaisesRegex(ContractError, "model_manifest does not match model"):
+            replace(planned, model=_model(revision="sha256:other"))
+
     def test_explore_returns_fits_and_explicit_rejections(self) -> None:
         compatible = _provider()
         unsupported = _provider(
@@ -353,9 +390,12 @@ class PlannerTests(unittest.TestCase):
 
         candidate = result.candidates[0]
         self.assertEqual(candidate.status, CandidateStatus.FEASIBLE)
+        self.assertEqual(candidate.single_group_audit.status, AuditStatus.INSUFFICIENT)  # type: ignore[union-attr]
         self.assertEqual(candidate.sequences_per_replica, 2)
         self.assertEqual(candidate.resource_claim.serving_replicas, 19)  # type: ignore[union-attr]
         self.assertEqual(candidate.resource_claim.allocated_devices, 152)  # type: ignore[union-attr]
+        self.assertTrue(any("not divisible" in warning for warning in candidate.warnings))
+        self.assertEqual(sum("not divisible" in warning for warning in candidate.warnings), 1)
 
     def test_lowest_cost_rejects_mixed_currencies(self) -> None:
         euro = _provider(provider_id="provider-eu", price_currency="EUR")

@@ -18,6 +18,7 @@ from .importers import (
     import_vllm_benchmark,
     import_vllm_initialization,
     materialize_recipe_draft,
+    resolve_huggingface_manifest,
 )
 from .inventory import MeasurementInventory, ProviderInventory, RuntimeInventory
 from .models import CapacityContract, HardwareInventory, HardwareSpec, ModelSpec, RuntimeVariant, WorkloadProfile
@@ -41,6 +42,14 @@ def _write(value: Any, output: str | None) -> None:
         Path(output).write_text(text, encoding="utf-8")
     else:
         sys.stdout.write(text)
+
+
+def _planner_model(model_path: str | None, manifest_path: str | None) -> ModelSpec | ModelManifest:
+    if model_path is not None:
+        return ModelSpec.from_dict(_read(model_path))
+    if manifest_path is not None:
+        return ModelManifest.from_dict(_read(manifest_path))
+    raise ValueError("one of --model or --manifest is required")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -98,6 +107,23 @@ def build_parser() -> argparse.ArgumentParser:
     manifest.add_argument("--parameter-count", type=int)
     manifest.add_argument("--output")
 
+    resolve_model = sub.add_parser(
+        "resolve-model",
+        help="resolve a pinned public Hugging Face model into a replayable manifest",
+    )
+    resolve_model.add_argument("--repo-id", required=True)
+    resolve_model.add_argument("--revision", required=True, help="immutable 40-character commit SHA")
+    resolve_model.add_argument("--cache-dir")
+    resolve_model.add_argument("--kv-bytes-per-token-per-device", type=int)
+    resolve_model.add_argument("--parameter-count", type=int)
+    resolve_model.add_argument("--resident-weight-bytes", type=int)
+    resolve_model.add_argument(
+        "--inspect-safetensors-headers",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    resolve_model.add_argument("--output")
+
     initialization = sub.add_parser("import-vllm-init", help="normalize vLLM initialization memory evidence")
     initialization.add_argument("--input", required=True)
     initialization.add_argument("--source", required=True)
@@ -131,7 +157,9 @@ def build_parser() -> argparse.ArgumentParser:
         "explore",
         help="compare one model across provider instances and runtime options",
     )
-    explore_parser.add_argument("--model", required=True)
+    explore_model = explore_parser.add_mutually_exclusive_group(required=True)
+    explore_model.add_argument("--model")
+    explore_model.add_argument("--manifest")
     explore_parser.add_argument("--providers", required=True)
     explore_parser.add_argument("--runtimes", required=True)
     explore_parser.add_argument("--context-tokens", required=True, type=int)
@@ -141,7 +169,9 @@ def build_parser() -> argparse.ArgumentParser:
         "plan-providers",
         help="size one model and load across provider instances and runtime options",
     )
-    provider_plan.add_argument("--model", required=True)
+    plan_model = provider_plan.add_mutually_exclusive_group(required=True)
+    plan_model.add_argument("--model")
+    plan_model.add_argument("--manifest")
     provider_plan.add_argument("--providers", required=True)
     provider_plan.add_argument("--runtimes", required=True)
     provider_plan.add_argument("--load", required=True)
@@ -211,6 +241,17 @@ def main(argv: list[str] | None = None) -> int:
                 parameter_count_override=args.parameter_count,
             )
             _write(manifest.to_dict(), args.output)
+        elif args.command == "resolve-model":
+            resolved = resolve_huggingface_manifest(
+                args.repo_id,
+                args.revision,
+                cache_dir=None if args.cache_dir is None else Path(args.cache_dir),
+                kv_bytes_per_token_per_device_override=args.kv_bytes_per_token_per_device,
+                parameter_count_override=args.parameter_count,
+                resident_weight_bytes_override=args.resident_weight_bytes,
+                inspect_safetensors_headers=args.inspect_safetensors_headers,
+            )
+            _write(resolved.to_dict(), args.output)
         elif args.command == "import-vllm-init":
             _write(import_vllm_initialization(_read(args.input), source=args.source).to_dict(), args.output)
         elif args.command == "materialize-recipe":
@@ -234,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
             _write(benchmark_profile.to_dict(), args.output)
         elif args.command == "explore":
             exploration = explore(
-                ModelSpec.from_dict(_read(args.model)),
+                _planner_model(args.model, args.manifest),
                 ProviderInventory.from_dict(_read(args.providers)),
                 RuntimeInventory.from_dict(_read(args.runtimes)),
                 context_tokens=args.context_tokens,
@@ -242,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
             _write(exploration.to_dict(), args.output)
         elif args.command == "plan-providers":
             capacity_plan = plan_providers(
-                ModelSpec.from_dict(_read(args.model)),
+                _planner_model(args.model, args.manifest),
                 ProviderInventory.from_dict(_read(args.providers)),
                 RuntimeInventory.from_dict(_read(args.runtimes)),
                 LoadRequirement.from_dict(_read(args.load)),

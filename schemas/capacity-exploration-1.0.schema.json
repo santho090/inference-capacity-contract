@@ -3,11 +3,17 @@
   "$id": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-exploration-1.0.schema.json",
   "title": "Capacity Exploration 1.0",
   "type": "object",
-  "required": ["schema_version", "model", "context_tokens", "candidates", "assumptions"],
+  "required": ["schema_version", "model", "model_manifest", "context_tokens", "candidates", "assumptions"],
   "properties": {
     "schema_version": {"const": "capacity-exploration-1.0"},
     "model": {
       "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/model"
+    },
+    "model_manifest": {
+      "oneOf": [
+        {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/model-manifest-1.0.schema.json"},
+        {"type": "null"}
+      ]
     },
     "context_tokens": {"type": "integer", "minimum": 1},
     "candidates": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/candidate"}},
@@ -42,7 +48,7 @@
         "context_tokens", "recipe_variant_fingerprint", "sequences_per_replica",
         "replicas_per_instance", "sequences_per_instance", "max_replicas",
         "max_sequences_at_context", "resource_claim", "hourly_cost", "cost_currency",
-        "rejection_reasons", "warnings", "contract", "audit"
+        "rejection_reasons", "warnings", "contract", "single_group_audit"
       ],
       "properties": {
         "rank": {"type": "integer", "minimum": 1},
@@ -64,7 +70,7 @@
         "rejection_reasons": {"type": "array", "items": {"type": "string"}},
         "warnings": {"type": "array", "items": {"type": "string"}},
         "contract": {"oneOf": [{"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json"}, {"type": "null"}]},
-        "audit": {"oneOf": [{"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/recipe-audit-2.0.schema.json"}, {"type": "null"}]}
+        "single_group_audit": {"oneOf": [{"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/recipe-audit-2.0.schema.json"}, {"type": "null"}]}
       },
       "additionalProperties": false
     }

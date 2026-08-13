@@ -72,7 +72,7 @@ installed separately with `python -m pip install -e '.[dev]'`.
 | How many replicas does a measured workload need? | `recommend_scale` | `icc scale` |
 | Is this complete TP/DP/EP and llm-d recipe good for this load? | `audit_recipe` | `icc audit` |
 | What can be checked before all recipe facts are known? | `audit_recipe_draft` | `icc import-llmd`, `icc audit-draft` |
-| How do I pin model metadata without downloading weights? | `resolve_huggingface_manifest` | `icc import-model-manifest` for caller-fetched metadata |
+| How do I pin model metadata without downloading weights? | `resolve_huggingface_manifest` | `icc resolve-model` or `icc import-model-manifest` |
 | How do I complete a draft after initialization? | `materialize_recipe_draft` | `icc materialize-recipe` |
 | How do I bind vLLM measurements to a recipe? | importer functions | `icc import-vllm-init`, `icc import-vllm-benchmark` |
 | Is an existing capacity document valid? | `CapacityContract.from_dict` | `icc validate` |
@@ -182,9 +182,21 @@ whole-instance allocated devices, so packing waste is visible. Lowest-cost
 ranking rejects mixed currencies rather than pretending that their numeric
 prices are comparable.
 
+In `plan-providers` output, candidate `status` describes the proposed plan.
+`single_group_audit` shows why one TP group does or does not meet the load
+before scaling. For example, a candidate can be `feasible` with a 19-group
+resource claim while its `single_group_audit` is `insufficient`. The field name
+makes the two scopes explicit.
+
 The first planner handles one model and homogeneous candidates. It does not
 split replicas across providers, stretch one TP replica across instances, or
 reserve infrastructure.
+
+Both planner commands accept either `--model` for a normalized `ModelSpec` or
+`--manifest` for a replayable `model-manifest-1.0` document. The Python APIs
+accept the same two object types directly. When a manifest is supplied, the
+result keeps it under `model_manifest`, and each candidate recipe carries its
+evidence. With `--model`, `model_manifest` is `null`.
 
 ## Import an existing llm-d recipe
 
@@ -213,9 +225,32 @@ per-device placement override comes from `import_vllm_initialization`.
 ## Resolve and measure the exact variant
 
 `resolve_huggingface_manifest` requires a 40-character commit SHA. It reads
-`config.json`, the SafeTensors index, and the header range of each shard. Tensor
-payloads are not downloaded. The normalized manifest can be cached and replayed
-offline.
+`config.json` plus either the SafeTensors index and each shard header or one
+`model.safetensors` header. Tensor payloads are not downloaded. The normalized
+manifest can be cached and replayed offline. A single-file manifest records
+artifact bytes as derived from `model.safetensors` header offsets; it does not
+claim that an index existed.
+
+The optional online CLI follows the same rule:
+
+```bash
+icc resolve-model \
+  --repo-id example/model \
+  --revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --cache-dir .icc-cache \
+  --output model-manifest.json
+
+icc explore \
+  --manifest model-manifest.json \
+  --providers providers.json \
+  --runtimes runtimes.json \
+  --context-tokens 8192
+```
+
+The first command needs network access for an uncached public model. Repeating
+the exact request reads the cached manifest without a network call. Planning
+from `model-manifest.json` is fully offline. Floating revisions such as `main`
+are rejected.
 
 For environments that fetch metadata themselves, use
 `import_huggingface_manifest` or the CLI:
@@ -235,6 +270,11 @@ model config or an explicit caller value. SafeTensors headers describe stored
 tensors, which may be packed and may include scale tensors; ICC records their
 element count separately. Custom, hybrid, and MLA cache layouts still need a
 measured KV-bytes/token override.
+
+For an unquantized model whose config omits `num_parameters`, the online
+resolver uses the pinned model API's SafeTensors parameter total and records
+that source in the manifest. It never applies that fallback to a quantized
+model.
 
 Once vLLM has initialized, normalize its measured memory ledger. Once a serving
 benchmark has completed, bind its counters and latency percentile to the exact
