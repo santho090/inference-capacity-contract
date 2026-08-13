@@ -344,6 +344,80 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(bf16.candidates[0].status, CandidateStatus.REJECTED)
         self.assertEqual(int4.candidates[0].status, CandidateStatus.FITS)
 
+    def test_quantized_manifest_requires_measured_runtime_resident_weight_bytes(self) -> None:
+        manifest = import_huggingface_manifest(
+            "example/quantized",
+            "a" * 40,
+            {
+                "num_hidden_layers": 2,
+                "num_key_value_heads": 1,
+                "num_attention_heads": 2,
+                "hidden_size": 128,
+                "max_position_embeddings": 1024,
+                "quantization_config": {"bits": 4},
+            },
+            {"metadata": {"total_size": 4 * GIB}},
+            parameter_count_override=7_000_000_000,
+        )
+        provider = _provider(
+            instance_type="accelerator-16gb-x1",
+            accelerator_id="accelerator-16gb",
+            memory_bytes_per_device=16 * GIB,
+            price_per_instance_hour=None,
+            price_currency=None,
+            max_instances=None,
+            collected_at=None,
+        )
+        runtime = _runtime(supported_accelerator_ids=("accelerator-16gb",))
+
+        unresolved = explore(manifest, _providers(provider), _runtimes(runtime), context_tokens=1024)
+        measured_total_manifest = replace(
+            manifest,
+            model=replace(manifest.model, explicit_weight_bytes=4 * GIB),
+        )
+        measured_total = explore(
+            measured_total_manifest,
+            _providers(provider),
+            _runtimes(runtime),
+            context_tokens=1024,
+        )
+        mixed_manifest = replace(
+            measured_total_manifest,
+            model=replace(measured_total_manifest.model, weight_dtype="quantized"),
+        )
+        multi_device = explore(
+            mixed_manifest,
+            _providers(replace(provider, devices_per_instance=8)),
+            _runtimes(
+                replace(
+                    runtime,
+                    runtime=replace(
+                        runtime.runtime,
+                        tensor_parallel_size=8,
+                        kv_heads_per_device=1,
+                    ),
+                )
+            ),
+            context_tokens=1024,
+        )
+        measured = explore(
+            manifest,
+            _providers(provider),
+            _runtimes(
+                replace(
+                    runtime,
+                    runtime=replace(runtime.runtime, weight_bytes_per_device_override=4 * GIB),
+                )
+            ),
+            context_tokens=1024,
+        )
+
+        self.assertEqual(unresolved.candidates[0].status, CandidateStatus.REJECTED)
+        self.assertIn("measured per-device resident weight bytes", unresolved.candidates[0].rejection_reasons[0])
+        self.assertEqual(measured_total.candidates[0].status, CandidateStatus.FITS)
+        self.assertEqual(multi_device.candidates[0].status, CandidateStatus.REJECTED)
+        self.assertEqual(measured.candidates[0].status, CandidateStatus.FITS)
+
     def test_flow_control_is_used_by_provider_plans(self) -> None:
         provider = _provider(
             instance_type="accelerator-288gb-x8",

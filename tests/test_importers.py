@@ -107,7 +107,7 @@ class ModelManifestImporterTests(unittest.TestCase):
         index = {"metadata": {"total_size": 1024}}
         with self.assertRaisesRegex(ContractError, "immutable 40-character"):
             import_huggingface_manifest("example/custom", "main", config, index)
-        with self.assertRaisesRegex(ContractError, "KV override"):
+        with self.assertRaisesRegex(ContractError, "kv_bytes_per_token_per_device_override"):
             import_huggingface_manifest("example/custom", PINNED_REVISION, config, index)
 
     def test_cache_round_trip_is_offline(self) -> None:
@@ -195,6 +195,121 @@ class ModelManifestImporterTests(unittest.TestCase):
         self.assertEqual(manifest.model.weight_dtype, "int4")
         self.assertEqual(manifest.model.parameter_count, 1000)
 
+    def test_imports_nested_hybrid_quantized_model_metadata(self) -> None:
+        config = {
+            "architectures": ["KimiK3ForConditionalGeneration"],
+            "model_type": "kimi_k3",
+            "text_config": {
+                "architectures": ["KimiLinearForCausalLM"],
+                "num_hidden_layers": 93,
+                "num_key_value_heads": 96,
+                "num_attention_heads": 96,
+                "hidden_size": 7168,
+                "v_head_dim": 128,
+                "max_position_embeddings": 1_048_576,
+                "kv_lora_rank": 512,
+                "linear_attn_config": {"head_dim": 128},
+                "quantization_config": {
+                    "format": "mxfp4-pack-quantized",
+                    "ignore": ["lm_head"],
+                    "config_groups": {"group_0": {"weights": {"num_bits": 4}}},
+                },
+            },
+        }
+        manifest = import_huggingface_manifest(
+            "moonshotai/Kimi-K3",
+            PINNED_REVISION,
+            config,
+            {"metadata": {"total_size": 1_560_860_324_864}},
+            parameter_count_override=2_800_000_000_000,
+            kv_bytes_per_token_per_device_override=4096,
+            resident_weight_bytes_override=1_560_860_324_864,
+        )
+
+        self.assertEqual(manifest.model.num_layers, 93)
+        self.assertEqual(manifest.model.num_kv_heads, 96)
+        self.assertEqual(manifest.model.head_dim, 128)
+        self.assertEqual(manifest.model.max_model_len, 1_048_576)
+        self.assertEqual(manifest.model.attention_type, "hybrid")
+        self.assertEqual(manifest.model.weight_dtype, "quantized")
+        self.assertEqual(manifest.model.explicit_weight_bytes, 1_560_860_324_864)
+        self.assertEqual(manifest.model.architecture, "KimiK3ForConditionalGeneration")
+        self.assertEqual(manifest.field_sources["num_layers"], "config.text_config.num_hidden_layers")
+        self.assertEqual(manifest.field_sources["head_dim"], "config.text_config.v_head_dim")
+        self.assertIn("config.text_config.quantization_config", manifest.field_sources["weight_dtype"])
+
+    def test_prefers_explicit_head_dim_over_hidden_size_quotient(self) -> None:
+        manifest = import_huggingface_manifest(
+            "example/explicit-head-dim",
+            PINNED_REVISION,
+            {
+                "num_hidden_layers": 28,
+                "num_key_value_heads": 16,
+                "num_attention_heads": 16,
+                "hidden_size": 3072,
+                "head_dim": 256,
+                "max_position_embeddings": 8192,
+                "num_parameters": 7_000_000_000,
+            },
+            {"metadata": {"total_size": 4_000_000_000}},
+        )
+
+        self.assertEqual(manifest.model.head_dim, 256)
+        self.assertEqual(manifest.field_sources["head_dim"], "config.head_dim")
+
+    def test_resolver_reports_all_required_kimi_inputs_before_fetching_index(self) -> None:
+        config: dict[str, object] = {
+            "text_config": {
+                "num_hidden_layers": 93,
+                "num_key_value_heads": 96,
+                "num_attention_heads": 96,
+                "hidden_size": 7168,
+                "v_head_dim": 128,
+                "max_position_embeddings": 1_048_576,
+                "kv_lora_rank": 512,
+                "linear_attn_config": {"head_dim": 128},
+                "quantization_config": {
+                    "ignore": ["lm_head"],
+                    "config_groups": {"group_0": {"weights": {"num_bits": 4}}},
+                },
+            }
+        }
+        calls: list[str] = []
+
+        def fetch(url: str) -> dict[str, object]:
+            calls.append(url)
+            if url.endswith("config.json"):
+                return config
+            self.fail(f"resolver fetched metadata after detecting missing inputs: {url}")
+
+        with self.assertRaisesRegex(
+            ContractError,
+            "parameter_count_override.*kv_bytes_per_token.*resident_weight_bytes_override",
+        ):
+            resolve_huggingface_manifest(
+                "moonshotai/Kimi-K3",
+                PINNED_REVISION,
+                fetch_json=fetch,
+                inspect_safetensors_headers=False,
+            )
+        self.assertEqual(len(calls), 1)
+
+    def test_resolver_rejects_invalid_overrides_before_network_access(self) -> None:
+        cases = (
+            {"parameter_count_override": 0},
+            {"kv_bytes_per_token_per_device_override": -1},
+            {"resident_weight_bytes_override": 0},
+        )
+        for overrides in cases:
+            with self.subTest(overrides=overrides):
+                with self.assertRaisesRegex(ContractError, "positive integer"):
+                    resolve_huggingface_manifest(
+                        "example/model",
+                        PINNED_REVISION,
+                        fetch_json=lambda _: self.fail("invalid input reached the network boundary"),
+                        **overrides,  # type: ignore[arg-type]
+                    )
+
     def test_resolver_uses_pinned_api_parameter_total_for_unquantized_models(self) -> None:
         calls: list[str] = []
 
@@ -249,7 +364,7 @@ class ModelManifestImporterTests(unittest.TestCase):
                 inspect_safetensors_headers=False,
             )
 
-        with self.assertRaisesRegex(ContractError, "quantized models require"):
+        with self.assertRaisesRegex(ContractError, "parameter_count_override"):
             resolve_huggingface_manifest(
                 "example/quantized",
                 PINNED_REVISION,

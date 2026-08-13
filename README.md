@@ -268,8 +268,30 @@ icc import-model-manifest \
 Quantized or mixed-dtype manifests need the logical parameter count from the
 model config or an explicit caller value. SafeTensors headers describe stored
 tensors, which may be packed and may include scale tensors; ICC records their
-element count separately. Custom, hybrid, and MLA cache layouts still need a
-measured KV-bytes/token override.
+element count separately. A mixed layout, including a quantization config with
+an ignore list, also needs measured resident weight bytes. Custom, hybrid, and
+MLA cache layouts need a measured KV-bytes/token override.
+
+For example, the pinned Kimi K3 config is enough to identify its 93-layer
+hybrid text model, explicit 128-wide value heads, 1,048,576-token model limit,
+and mixed MXFP4 layout. It is not enough to derive the logical parameter count,
+the runtime's hybrid KV bytes per token, or resident GPU bytes. The resolver
+returns those three missing inputs before fetching the large SafeTensors index:
+
+```bash
+icc resolve-model \
+  --repo-id moonshotai/Kimi-K3 \
+  --revision 9f62e4e9fffbd0a83ddd60e1c209d828994b3569 \
+  --no-inspect-safetensors-headers
+```
+
+Supply `--parameter-count`, `--kv-bytes-per-token-per-device`, and
+`--resident-weight-bytes` from authoritative model and initialization evidence
+to create the manifest. Provider planning for a quantized manifest also needs
+an exact `weight_bytes_per_device_override` in each multi-device runtime
+option. A measured total on the manifest is sufficient only for a one-device
+layout. This prevents packed checkpoint size, nominal four-bit arithmetic, or
+even sharding from becoming an unsupported per-device GPU-memory claim.
 
 For an unquantized model whose config omits `num_parameters`, the online
 resolver uses the pinned model API's SafeTensors parameter total and records
@@ -424,9 +446,12 @@ per-device KV-bytes/token override. The closed-form calculation is only for
 uniform full-attention K/V storage.
 
 Tensor-parallel weight layouts can contain replicated tensors or uneven shards.
-Without `weight_bytes_per_device_override`, the calculator divides total
-artifact bytes evenly and adds a warning. Runtime adapters should provide a
-measured or manifest-derived per-device value when one is available.
+Without `weight_bytes_per_device_override`, the calculator divides the model's
+declared weight bytes evenly and adds a warning. For a direct `ModelSpec`, those
+bytes may be nominal parameter-count-by-dtype arithmetic. A resolved quantized
+manifest must instead carry measured resident bytes. A multi-device plan also
+requires a per-device runtime value. Runtime adapters should provide that value
+when one is available.
 
 ## Validation levels
 

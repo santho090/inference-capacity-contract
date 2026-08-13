@@ -164,6 +164,13 @@ the accelerator identities known to support the option. An empty accelerator
 list is an unverified caller assumption, which appears as a warning rather
 than a compatibility claim.
 
+A resolved quantized model manifest cannot use nominal parameter-count-by-bit
+width arithmetic as a resident-memory claim. A one-device candidate may use
+measured total resident bytes from the manifest. A multi-device candidate must
+use measured per-device resident bytes from the exact runtime layout. Mixed
+quantization layouts require measured total resident bytes while the manifest
+is being resolved.
+
 `explore` and `plan` use the same candidate evaluator. Both run the capacity
 calculator and the serving-recipe audit. Exploration reports per-replica and
 per-instance sequence capacity at one context. Planning applies a load,

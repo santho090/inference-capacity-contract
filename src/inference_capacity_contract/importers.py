@@ -49,11 +49,111 @@ def _required_string(name: str, value: object) -> str:
     return value
 
 
-def _config_int(config: Mapping[str, Any], *names: str) -> tuple[int, str]:
+def _config_int(config: Mapping[str, Any], *names: str, source: str = "config") -> tuple[int, str]:
     for name in names:
         if name in config:
-            return _positive_int(name, config[name]), f"config.{name}"
+            return _positive_int(name, config[name]), f"{source}.{name}"
     raise ContractError(f"model config is missing {' or '.join(names)}")
+
+
+def _text_config(config: Mapping[str, Any]) -> tuple[Mapping[str, Any], str]:
+    nested = config.get("text_config")
+    if isinstance(nested, Mapping):
+        return nested, "config.text_config"
+    return config, "config"
+
+
+def _quantization_config(config: Mapping[str, Any]) -> tuple[Mapping[str, Any] | None, str | None]:
+    text, text_source = _text_config(config)
+    for candidate, source in (
+        (config.get("quantization_config"), "config.quantization_config"),
+        (text.get("quantization_config"), f"{text_source}.quantization_config"),
+    ):
+        if isinstance(candidate, Mapping):
+            return candidate, source
+    return None, None
+
+
+def _quantization_bits(quantization: Mapping[str, Any], source: str) -> tuple[int | None, str]:
+    ignored_modules = quantization.get("ignore")
+    if isinstance(ignored_modules, list) and ignored_modules:
+        return None, f"{source}.ignore"
+    if quantization.get("bits") is not None:
+        return _positive_int("quantization_config.bits", quantization.get("bits")), f"{source}.bits"
+    groups = quantization.get("config_groups")
+    if not isinstance(groups, Mapping):
+        return None, source
+    bit_sources: list[tuple[int, str]] = []
+    for name, group in groups.items():
+        if not isinstance(group, Mapping):
+            continue
+        weights = group.get("weights")
+        if not isinstance(weights, Mapping) or weights.get("num_bits") is None:
+            continue
+        bit_sources.append(
+            (
+                _positive_int("quantization weights.num_bits", weights.get("num_bits")),
+                f"{source}.config_groups.{name}.weights.num_bits",
+            )
+        )
+    bit_widths = {bits for bits, _ in bit_sources}
+    if len(bit_widths) > 1:
+        return None, source
+    return bit_sources[0] if bit_sources else (None, source)
+
+
+def _head_dim(
+    config: Mapping[str, Any],
+    source: str,
+    hidden_size: int,
+    attention_heads: int,
+) -> tuple[int, str]:
+    for name in ("head_dim", "v_head_dim"):
+        if config.get(name) is not None:
+            return _positive_int(name, config.get(name)), f"{source}.{name}"
+    linear_attention = config.get("linear_attn_config")
+    if isinstance(linear_attention, Mapping) and linear_attention.get("head_dim") is not None:
+        return (
+            _positive_int("linear_attn_config.head_dim", linear_attention.get("head_dim")),
+            f"{source}.linear_attn_config.head_dim",
+        )
+    if hidden_size % attention_heads:
+        raise ContractError("hidden_size must be divisible by num_attention_heads when head_dim is absent")
+    return hidden_size // attention_heads, f"derived:{source}.hidden_size/{source}.num_attention_heads"
+
+
+def _attention_type(config: Mapping[str, Any], kv_heads: int, attention_heads: int) -> str:
+    if isinstance(config.get("linear_attn_config"), Mapping):
+        return "hybrid"
+    custom_attention = any(key in config for key in ("kv_lora_rank", "q_lora_rank", "cache_group_config"))
+    if "kv_lora_rank" in config:
+        return "mla"
+    if custom_attention:
+        return "custom"
+    if kv_heads == attention_heads:
+        return "mha"
+    if kv_heads == 1:
+        return "mqa"
+    return "gqa"
+
+
+def _required_manifest_inputs(
+    *,
+    parameter_count: object,
+    attention_type: str,
+    quantization_present: bool,
+    quantization_bits: int | None,
+    kv_bytes_per_token_per_device_override: int | None,
+    resident_weight_bytes_override: int | None,
+) -> list[str]:
+    required: list[str] = []
+    if parameter_count is None:
+        required.append("parameter_count_override (logical model parameter count)")
+    if attention_type in {"custom", "hybrid", "mla"} and kv_bytes_per_token_per_device_override is None:
+        required.append("kv_bytes_per_token_per_device_override (measured runtime KV layout)")
+    if quantization_present and quantization_bits not in (4, 8) and resident_weight_bytes_override is None:
+        required.append("resident_weight_bytes_override (unsupported or mixed quantization layout)")
+    return required
 
 
 def _normalize_dtype(value: object) -> str:
@@ -181,23 +281,35 @@ def import_huggingface_manifest(
 
     repo = _required_string("repo_id", repo_id)
     pinned = _pinned_revision(revision)
-    layers, layers_source = _config_int(config, "num_hidden_layers", "n_layer")
-    kv_heads, kv_source = _config_int(config, "num_key_value_heads", "n_head_kv", "num_attention_heads")
-    attention_heads, attention_source = _config_int(config, "num_attention_heads", "n_head")
-    hidden_size, hidden_source = _config_int(config, "hidden_size", "n_embd")
-    if hidden_size % attention_heads:
-        raise ContractError("hidden_size must be divisible by num_attention_heads")
-    head_dim = hidden_size // attention_heads
-    max_model_len, context_source = _config_int(config, "max_position_embeddings", "model_max_length", "n_positions")
-    dtype_key = "torch_dtype" if "torch_dtype" in config else "dtype" if "dtype" in config else "default"
-    dtype = _normalize_dtype(config.get("torch_dtype", config.get("dtype", "bf16")))
-    quantization = config.get("quantization_config")
+    text, text_source = _text_config(config)
+    layers, layers_source = _config_int(text, "num_hidden_layers", "n_layer", source=text_source)
+    kv_heads, kv_source = _config_int(
+        text,
+        "num_key_value_heads",
+        "n_head_kv",
+        "num_attention_heads",
+        source=text_source,
+    )
+    attention_heads, _ = _config_int(text, "num_attention_heads", "n_head", source=text_source)
+    hidden_size, _ = _config_int(text, "hidden_size", "n_embd", source=text_source)
+    head_dim, head_source = _head_dim(text, text_source, hidden_size, attention_heads)
+    max_model_len, context_source = _config_int(
+        text,
+        "max_position_embeddings",
+        "model_max_length",
+        "n_positions",
+        source=text_source,
+    )
+    quantization, quantization_source = _quantization_config(config)
     quantization_bits: int | None = None
-    if isinstance(quantization, Mapping) and quantization.get("bits") is not None:
-        quantization_bits = _positive_int("quantization_config.bits", quantization.get("bits"))
-        if quantization_bits in (4, 8):
-            dtype = f"int{quantization_bits}"
-            dtype_key = "quantization_config.bits"
+    dtype_source: str
+    if quantization is None or quantization_source is None:
+        dtype_key = "torch_dtype" if "torch_dtype" in text else "dtype" if "dtype" in text else "default"
+        dtype = _normalize_dtype(text.get("torch_dtype", text.get("dtype", "bf16")))
+        dtype_source = f"{text_source}.{dtype_key}"
+    else:
+        quantization_bits, dtype_source = _quantization_bits(quantization, quantization_source)
+        dtype = f"int{quantization_bits}" if quantization_bits in (4, 8) else "quantized"
     metadata = safetensors_index.get("metadata")
     if not isinstance(metadata, Mapping):
         raise ContractError("SafeTensors index is missing metadata")
@@ -208,24 +320,24 @@ def import_huggingface_manifest(
     tensor_element_count = (
         None if safetensors_headers is None else tensor_element_count_from_safetensors_headers(safetensors_headers)
     )
-    if parameter_count_raw is None:
-        raise ContractError("logical parameter count requires parameter_count_override or config.num_parameters")
-    parameter_count = _positive_int("parameter_count", parameter_count_raw)
-    custom_attention = any(key in config for key in ("kv_lora_rank", "q_lora_rank", "cache_group_config"))
-    attention_type = (
-        "mla"
-        if "kv_lora_rank" in config
-        else "custom"
-        if custom_attention
-        else "mha"
-        if kv_heads == attention_heads
-        else "mqa"
-        if kv_heads == 1
-        else "gqa"
+    attention_type = _attention_type(text, kv_heads, attention_heads)
+    required_inputs = _required_manifest_inputs(
+        parameter_count=parameter_count_raw,
+        attention_type=attention_type,
+        quantization_present=quantization is not None,
+        quantization_bits=quantization_bits,
+        kv_bytes_per_token_per_device_override=kv_bytes_per_token_per_device_override,
+        resident_weight_bytes_override=resident_weight_bytes_override,
     )
-    if custom_attention and kv_bytes_per_token_per_device_override is None:
-        raise ContractError("custom or MLA attention requires a measured per-device KV override")
+    if required_inputs:
+        raise ContractError("model manifest requires caller inputs: " + "; ".join(required_inputs))
+    assert parameter_count_raw is not None
+    parameter_count = _positive_int("parameter_count", parameter_count_raw)
     architecture_value = config.get("architectures")
+    architecture_source = "config.architectures[0]"
+    if not isinstance(architecture_value, list) or not architecture_value:
+        architecture_value = text.get("architectures")
+        architecture_source = f"{text_source}.architectures[0]"
     architecture: str | None = None
     if isinstance(architecture_value, list) and architecture_value and isinstance(architecture_value[0], str):
         architecture = architecture_value[0]
@@ -255,12 +367,14 @@ def import_huggingface_manifest(
         ),
         "num_layers": layers_source,
         "num_kv_heads": kv_source,
-        "head_dim": f"derived:{hidden_source}/{attention_source}",
-        "weight_dtype": f"config.{dtype_key}",
+        "head_dim": head_source,
+        "weight_dtype": dtype_source,
         "max_model_len": context_source,
-        "attention_type": "derived:config-attention-fields",
+        "attention_type": f"derived:{text_source}-attention-fields",
         "artifact_bytes": "safetensors-index.metadata.total_size",
     }
+    if architecture is not None:
+        field_sources["architecture"] = architecture_source
     if resident_weight_bytes_override is not None:
         field_sources["explicit_weight_bytes"] = "caller.measured-resident-weight-override"
     if tensor_element_count is not None:
@@ -418,10 +532,19 @@ def resolve_huggingface_manifest(
     if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) is None:
         raise ContractError("repo_id must be in owner/name form")
     pinned = _pinned_revision(revision)
+    if kv_bytes_per_token_per_device_override is not None:
+        _positive_int(
+            "kv_bytes_per_token_per_device_override",
+            kv_bytes_per_token_per_device_override,
+        )
+    if parameter_count_override is not None:
+        _positive_int("parameter_count_override", parameter_count_override)
+    if resident_weight_bytes_override is not None:
+        _positive_int("resident_weight_bytes_override", resident_weight_bytes_override)
     cache_path = None
     if cache_dir is not None:
         cache_inputs = {
-            "cache_version": "model-manifest-cache-1.2",
+            "cache_version": "model-manifest-cache-1.3",
             "repo_id": repo,
             "revision": pinned,
             "kv_bytes_per_token_per_device_override": kv_bytes_per_token_per_device_override,
@@ -443,17 +566,44 @@ def resolve_huggingface_manifest(
     config = fetch(f"{root}/config.json")
     resolved_parameter_count = parameter_count_override
     api_parameter_count: int | None = None
+    text, text_source = _text_config(config)
+    quantization, quantization_source = _quantization_config(config)
+    quantization_bits = (
+        None
+        if quantization is None or quantization_source is None
+        else _quantization_bits(quantization, quantization_source)[0]
+    )
+    kv_heads, _ = _config_int(
+        text,
+        "num_key_value_heads",
+        "n_head_kv",
+        "num_attention_heads",
+        source=text_source,
+    )
+    attention_heads, _ = _config_int(text, "num_attention_heads", "n_head", source=text_source)
+    attention_type = _attention_type(text, kv_heads, attention_heads)
     if resolved_parameter_count is None and config.get("num_parameters") is None:
-        if isinstance(config.get("quantization_config"), Mapping):
-            raise ContractError("quantized models require parameter_count_override or config.num_parameters")
-        model_info = fetch(f"https://huggingface.co/api/models/{quote(repo, safe='/')}/revision/{pinned}")
-        if str(model_info.get("sha", "")).lower() != pinned:
-            raise ContractError("Hugging Face model metadata does not match the pinned revision")
-        safetensors_info = model_info.get("safetensors")
-        if not isinstance(safetensors_info, Mapping):
-            raise ContractError("Hugging Face model metadata is missing SafeTensors parameter totals")
-        api_parameter_count = _positive_int("safetensors.total", safetensors_info.get("total"))
-        resolved_parameter_count = api_parameter_count
+        if quantization is None:
+            model_info = fetch(f"https://huggingface.co/api/models/{quote(repo, safe='/')}/revision/{pinned}")
+            if str(model_info.get("sha", "")).lower() != pinned:
+                raise ContractError("Hugging Face model metadata does not match the pinned revision")
+            safetensors_info = model_info.get("safetensors")
+            if not isinstance(safetensors_info, Mapping):
+                raise ContractError("Hugging Face model metadata is missing SafeTensors parameter totals")
+            api_parameter_count = _positive_int("safetensors.total", safetensors_info.get("total"))
+            resolved_parameter_count = api_parameter_count
+    required_inputs = _required_manifest_inputs(
+        parameter_count=(
+            resolved_parameter_count if resolved_parameter_count is not None else config.get("num_parameters")
+        ),
+        attention_type=attention_type,
+        quantization_present=quantization is not None,
+        quantization_bits=quantization_bits,
+        kv_bytes_per_token_per_device_override=kv_bytes_per_token_per_device_override,
+        resident_weight_bytes_override=resident_weight_bytes_override,
+    )
+    if required_inputs:
+        raise ContractError("model manifest requires caller inputs: " + "; ".join(required_inputs))
     try:
         index: Mapping[str, Any] | None = fetch(f"{root}/model.safetensors.index.json")
     except urllib.error.HTTPError as exc:

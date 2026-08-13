@@ -38,6 +38,28 @@ allows only two. The binding limit therefore requires 19 TP8 groups, or 152
 serving devices. Price and availability remain unknown because the fixture does
 not invent them.
 
+### Applying the shape to Kimi K3
+
+The pinned public Kimi K3 config can now be read without flattening its nested
+text model into the wrong architecture. ICC identifies 93 layers, 96 KV heads,
+an explicit value-head width of 128, a 1,048,576-token limit, hybrid attention,
+and a mixed MXFP4 checkpoint layout.
+
+That metadata does not make this sanitized TP8 fixture a measured Kimi K3
+recipe. A real run still needs three values from authoritative evidence:
+
+- the logical parameter count, because packed SafeTensors elements are not
+  logical model parameters;
+- resident weight bytes from the exact vLLM initialization and TP/EP layout;
+  and
+- per-device KV bytes per token from the hybrid cache layout.
+
+Until those values are supplied, `icc resolve-model` stops and lists the
+missing inputs. Once they are supplied, the same planner can test the real
+recipe's memory, runtime concurrency, and llm-d flow limits. Throughput and
+latency sizing still needs a benchmark profile for the exact recipe
+fingerprint and operating point.
+
 ## DP4 layout on an eight-device host
 
 `llmd-values-dp4-on-x8.json` describes TP1/DP4/EP on an eight-device host. The

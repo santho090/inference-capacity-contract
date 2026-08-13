@@ -34,7 +34,9 @@ schema, source-tree, and installed-wheel tests.
 Building blocks now available: immutable revision enforcement, optional
 metadata resolution, SafeTensors header-range parsing, offline manifest caches,
 partial llm-d recipe import, vLLM initialization evidence, and benchmark
-operating-point import.
+operating-point import. Nested text configs, explicit head dimensions, hybrid
+attention, and mixed quantization are recognized; unresolved runtime facts are
+returned as caller inputs rather than guessed.
 
 - resolve Hugging Face references to immutable revisions;
 - parse config and SafeTensors metadata without downloading full weights;

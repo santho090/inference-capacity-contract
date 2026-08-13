@@ -307,6 +307,19 @@ def _evaluate(
     unused_devices = provider.devices_per_instance % tp
     if unused_devices:
         warnings.append(f"{unused_devices} device(s) per instance cannot be assigned to a TP={tp} replica")
+    if (
+        manifest is not None
+        and model.weight_dtype in {"int4", "int8", "fp8", "quantized"}
+        and runtime.weight_bytes_per_device_override is None
+        and (model.explicit_weight_bytes is None or tp > 1)
+    ):
+        return _rejected(
+            provider,
+            runtime_option,
+            ("quantized model requires measured per-device resident weight bytes for this parallel layout",),
+            warnings,
+            replicas_per_instance,
+        )
     try:
         contract = capacity_for(model, provider.hardware_slice(tp), runtime)
     except ContractError as exc:
