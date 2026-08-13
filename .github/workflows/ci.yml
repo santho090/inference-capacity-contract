@@ -67,7 +67,6 @@ jobs:
             --revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
             --config docs/fixtures/model-config-long-context-moe.json \
             --safetensors-index docs/fixtures/model-safetensors-index-long-context-moe.json \
-            --kv-bytes-per-token-per-device 4096 \
             --output /tmp/icc-manifest.json
           /tmp/icc-venv/bin/icc materialize-recipe \
             --draft /tmp/icc-draft.json \
