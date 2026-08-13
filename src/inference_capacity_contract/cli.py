@@ -27,6 +27,7 @@ from .planner import PlanningObjective, explore
 from .planner import plan as plan_providers
 from .recipe import LoadRequirement, ServingRecipe, audit_recipe
 from .scaling import recommend_scale
+from .workflows import plan_huggingface_model
 
 
 def _read(path: str) -> dict[str, Any]:
@@ -198,6 +199,33 @@ def build_parser() -> argparse.ArgumentParser:
         default=PlanningObjective.LOWEST_COST.value,
     )
     provider_plan.add_argument("--output")
+
+    model_plan = sub.add_parser(
+        "plan-model",
+        help="resolve one Hugging Face model and plan it across provider candidates",
+    )
+    model_plan.add_argument("--repo-id", required=True)
+    model_plan.add_argument("--revision", default="main", help="branch, tag, or commit SHA (default: main)")
+    model_plan.add_argument("--providers", required=True)
+    model_plan.add_argument("--runtimes", required=True)
+    model_plan.add_argument("--load", required=True)
+    model_plan.add_argument("--measurements")
+    model_plan.add_argument("--cache-dir")
+    model_plan.add_argument("--kv-bytes-per-token-per-device", type=int)
+    model_plan.add_argument("--parameter-count", type=int)
+    model_plan.add_argument("--resident-weight-bytes", type=int)
+    model_plan.add_argument("--weight-dtype")
+    model_plan.add_argument(
+        "--inspect-safetensors-headers",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    model_plan.add_argument(
+        "--objective",
+        choices=tuple(item.value for item in PlanningObjective),
+        default=PlanningObjective.LOWEST_COST.value,
+    )
+    model_plan.add_argument("--output")
     return parser
 
 
@@ -322,6 +350,25 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
             _write(capacity_plan.to_dict(), args.output)
+        elif args.command == "plan-model":
+            model_plan_result = plan_huggingface_model(
+                args.repo_id,
+                ProviderInventory.from_dict(_read(args.providers)),
+                RuntimeInventory.from_dict(_read(args.runtimes)),
+                LoadRequirement.from_dict(_read(args.load)),
+                revision=args.revision,
+                objective=PlanningObjective(args.objective),
+                measurements=(
+                    None if args.measurements is None else MeasurementInventory.from_dict(_read(args.measurements))
+                ),
+                cache_dir=None if args.cache_dir is None else Path(args.cache_dir),
+                kv_bytes_per_token_per_device_override=args.kv_bytes_per_token_per_device,
+                parameter_count_override=args.parameter_count,
+                resident_weight_bytes_override=args.resident_weight_bytes,
+                weight_dtype_override=args.weight_dtype,
+                inspect_safetensors_headers=args.inspect_safetensors_headers,
+            )
+            _write(model_plan_result.to_dict(), args.output)
         else:
             raise ValueError(f"unknown command {args.command!r}")
         return 0

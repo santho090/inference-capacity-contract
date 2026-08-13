@@ -17,6 +17,8 @@ from inference_capacity_contract import (
     MeasuredGroupProfile,
     MeasurementInventory,
     ModelManifest,
+    ModelPlanningResult,
+    ModelPlanningStatus,
     ModelSpec,
     PlanningObjective,
     ProviderInventory,
@@ -33,6 +35,7 @@ from inference_capacity_contract import (
     import_vllm_initialization,
     inspect_huggingface_config,
     plan,
+    plan_huggingface_model,
     recommend_scale,
 )
 
@@ -42,6 +45,13 @@ GIB = 1024**3
 
 def _read_schema(name: str) -> dict[str, object]:
     value = json.loads((ROOT / "schemas" / name).read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise TypeError(f"{name} must contain a JSON object")
+    return value
+
+
+def _read_fixture(name: str) -> dict[str, object]:
+    value = json.loads((ROOT / "docs" / "fixtures" / name).read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise TypeError(f"{name} must contain a JSON object")
     return value
@@ -64,6 +74,7 @@ class SchemaTests(unittest.TestCase):
         self.measurement_inventory_schema = _read_schema("measurement-inventory-1.0.schema.json")
         self.exploration_schema = _read_schema("capacity-exploration-1.0.schema.json")
         self.plan_schema = _read_schema("capacity-plan-1.0.schema.json")
+        self.model_planning_schema = _read_schema("model-planning-result-1.0.schema.json")
         Draft202012Validator.check_schema(self.capacity_schema)
         Draft202012Validator.check_schema(self.scaling_schema)
         Draft202012Validator.check_schema(self.recipe_schema)
@@ -79,6 +90,71 @@ class SchemaTests(unittest.TestCase):
         Draft202012Validator.check_schema(self.measurement_inventory_schema)
         Draft202012Validator.check_schema(self.exploration_schema)
         Draft202012Validator.check_schema(self.plan_schema)
+        Draft202012Validator.check_schema(self.model_planning_schema)
+
+    def test_model_planning_result_document_validates(self) -> None:
+        providers = ProviderInventory.from_dict(_read_fixture("provider-inventory.json"))
+        runtimes = RuntimeInventory.from_dict(_read_fixture("runtime-inventory.json"))
+        load = LoadRequirement.from_dict(_read_fixture("load-provider-plan.json"))
+
+        def fetch(url: str) -> dict[str, object]:
+            if url.endswith("config.json"):
+                return {
+                    "num_hidden_layers": 2,
+                    "num_key_value_heads": 1,
+                    "num_attention_heads": 2,
+                    "hidden_size": 128,
+                    "max_position_embeddings": 8192,
+                    "torch_dtype": "float16",
+                    "num_parameters": 1024,
+                }
+            return {"metadata": {"total_size": 2048}}
+
+        result = plan_huggingface_model(
+            "example/model",
+            providers,
+            runtimes,
+            load,
+            revision="a" * 40,
+            fetch_json=fetch,
+            inspect_safetensors_headers=False,
+        )
+        self.assertEqual(result.status, ModelPlanningStatus.PLANNED)
+
+        registry = Registry()
+        for schema in (
+            self.capacity_schema,
+            self.recipe_schema,
+            self.load_schema,
+            self.audit_schema,
+            self.provider_inventory_schema,
+            self.runtime_inventory_schema,
+            self.manifest_schema,
+            self.exploration_schema,
+            self.plan_schema,
+            self.model_resolution_schema,
+            self.model_planning_schema,
+        ):
+            registry = registry.with_resource(str(schema["$id"]), Resource.from_contents(schema))
+        Draft202012Validator(self.model_planning_schema, registry=registry).validate(result.to_dict())
+        unresolved = ModelPlanningResult(
+            "model-planning-result-1.0",
+            ModelPlanningStatus.NEEDS_MODEL_INPUTS,
+            inspect_huggingface_config(
+                "example/model",
+                "a" * 40,
+                {
+                    "num_hidden_layers": 2,
+                    "num_key_value_heads": 1,
+                    "num_attention_heads": 2,
+                    "hidden_size": 128,
+                    "max_position_embeddings": 8192,
+                    "torch_dtype": "float16",
+                },
+            ),
+            None,
+        )
+        Draft202012Validator(self.model_planning_schema, registry=registry).validate(unresolved.to_dict())
 
     def test_provider_inventory_exploration_and_plan_documents_validate(self) -> None:
         model = ModelSpec.from_dict(

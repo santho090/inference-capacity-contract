@@ -40,6 +40,7 @@ jobs:
           /tmp/icc-venv/bin/icc --help
           /tmp/icc-venv/bin/icc inspect-model --help
           /tmp/icc-venv/bin/icc resolve-model --help
+          /tmp/icc-venv/bin/icc plan-model --help
           /tmp/icc-venv/bin/icc plan \
             --model docs/fixtures/model-7b.json \
             --hardware docs/fixtures/hardware-h100.json \

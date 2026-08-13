@@ -175,6 +175,13 @@ SHA. The model-info response must identify the requested repository when it
 contains an ID, and its SHA must be valid. The offline manifest importer accepts
 only an immutable SHA.
 
+`model-planning-result-1.0` joins online resolution to single-model provider
+planning without weakening the manifest boundary. `status=planned` contains a
+complete `capacity-plan-1.0`. `status=needs-model-inputs` contains one
+unresolved `model-resolution-draft-1.0` and no plan. Resolution errors other
+than missing caller evidence remain errors. The planner never accepts the
+draft itself.
+
 ## Provider planning
 
 `provider-inventory-1.0` records caller-supplied instance shapes. Price and
@@ -310,3 +317,5 @@ validated by the dependency-free Python parsers.
   `measurement-inventory-1.0`: caller-supplied planning inputs.
 - `capacity-exploration-1.0` and `capacity-plan-1.0`: ranked single-model
   candidate results and resource claims.
+- `model-planning-result-1.0`: one-call public-model resolution and provider
+  planning, with missing model evidence returned as data.

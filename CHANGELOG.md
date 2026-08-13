@@ -19,6 +19,9 @@
   with offline cache replay.
 - Lets online model inspection and resolution accept a branch or tag, default
   to `main`, and pin it before artifact access or cache lookup.
+- Adds `plan_huggingface_model` and `icc plan-model` to turn a public model ID,
+  caller inventories, and load into either a ranked plan or typed missing
+  model inputs.
 - Adds `icc inspect-model` and `model-resolution-draft-1.0` so discovered model
   facts and unresolved manifest inputs are returned as data.
 - Uses revision-bound SafeTensors parameter totals when an unquantized config

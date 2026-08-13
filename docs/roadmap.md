@@ -60,6 +60,7 @@ planning offline.
 - accept normalized user-supplied provider inventories;
 - add a versioned vLLM runtime adapter;
 - expose `explore` and `plan` over the same candidate evaluator;
+- [x] add a one-call public-model-to-provider planning workflow;
 - return ranked plans, rejected-candidate reasons, uncertainty, and resource
   claims;
 - reuse the recipe auditor for every proposed candidate;

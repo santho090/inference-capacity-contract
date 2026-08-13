@@ -370,6 +370,15 @@ class ModelResolutionDraft:
         return draft
 
 
+class IncompleteModelError(ContractError):
+    """Raised when strict resolution needs caller-supplied model facts."""
+
+    def __init__(self, draft: ModelResolutionDraft) -> None:
+        self.draft = draft
+        required_inputs = "; ".join(f"{item.path} ({item.reason})" for item in draft.unresolved)
+        super().__init__("model manifest requires caller inputs: " + required_inputs)
+
+
 def inspect_huggingface_config(
     repo_id: str,
     revision: str,
@@ -607,8 +616,7 @@ def import_huggingface_manifest(
         weight_dtype_override=weight_dtype_override,
     )
     if not draft.ready:
-        required_inputs = "; ".join(f"{item.path} ({item.reason})" for item in draft.unresolved)
-        raise ContractError("model manifest requires caller inputs: " + required_inputs)
+        raise IncompleteModelError(draft)
     repo = draft.model_id
     pinned = draft.revision
     facts = draft.facts
@@ -1000,8 +1008,7 @@ def resolve_huggingface_manifest(
         api_parameter_count=api_parameter_count,
     )
     if not draft.ready:
-        required_inputs = "; ".join(f"{item.path} ({item.reason})" for item in draft.unresolved)
-        raise ContractError("model manifest requires caller inputs: " + required_inputs)
+        raise IncompleteModelError(draft)
     try:
         index: Mapping[str, Any] | None = fetch(f"{root}/model.safetensors.index.json")
     except urllib.error.HTTPError as exc:

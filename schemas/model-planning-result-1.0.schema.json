@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santho090.github.io/inference-capacity-contract/schemas/model-planning-result-1.0.schema.json",
+  "title": "Model Planning Result 1.0",
+  "type": "object",
+  "required": ["schema_version", "status", "model_resolution", "capacity_plan"],
+  "properties": {
+    "schema_version": {"const": "model-planning-result-1.0"},
+    "status": {"enum": ["needs-model-inputs", "planned"]},
+    "model_resolution": {
+      "oneOf": [
+        {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/model-resolution-draft-1.0.schema.json"},
+        {"type": "null"}
+      ]
+    },
+    "capacity_plan": {
+      "oneOf": [
+        {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-plan-1.0.schema.json"},
+        {"type": "null"}
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "status": {"const": "needs-model-inputs"},
+        "model_resolution": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/model-resolution-draft-1.0.schema.json"},
+        "capacity_plan": {"type": "null"}
+      }
+    },
+    {
+      "properties": {
+        "status": {"const": "planned"},
+        "model_resolution": {"type": "null"},
+        "capacity_plan": {
+          "allOf": [
+            {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-plan-1.0.schema.json"},
+            {
+              "properties": {
+                "model_manifest": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/model-manifest-1.0.schema.json"}
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

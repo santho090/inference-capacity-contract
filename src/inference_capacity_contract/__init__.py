@@ -11,6 +11,7 @@ from .drafts import (
     import_llmd_values,
 )
 from .importers import (
+    IncompleteModelError,
     ModelManifest,
     ModelResolutionDraft,
     VLLMInitializationProfile,
@@ -67,6 +68,7 @@ from .recipe import (
     audit_recipe,
 )
 from .scaling import ScalingRecommendation, recommend_scale
+from .workflows import ModelPlanningResult, ModelPlanningStatus, plan_huggingface_model
 
 __all__ = [
     "CapacityContract",
@@ -102,6 +104,7 @@ __all__ = [
     "audit_recipe_draft",
     "import_llmd_values",
     "ModelManifest",
+    "IncompleteModelError",
     "ModelResolutionDraft",
     "VLLMInitializationProfile",
     "import_huggingface_manifest",
@@ -127,4 +130,7 @@ __all__ = [
     "CapacityPlan",
     "explore",
     "plan",
+    "ModelPlanningResult",
+    "ModelPlanningStatus",
+    "plan_huggingface_model",
 ]

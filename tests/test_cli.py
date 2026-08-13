@@ -6,13 +6,64 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from inference_capacity_contract import import_huggingface_manifest, inspect_huggingface_config
+from inference_capacity_contract import (
+    ModelPlanningResult,
+    ModelPlanningStatus,
+    import_huggingface_manifest,
+    inspect_huggingface_config,
+)
 from inference_capacity_contract.cli import main
 
 ROOT = Path(__file__).parents[1]
 
 
 class CliTests(unittest.TestCase):
+    def test_plan_model_returns_unresolved_inputs_as_json(self) -> None:
+        draft = inspect_huggingface_config(
+            "example/model",
+            "a" * 40,
+            {
+                "num_hidden_layers": 2,
+                "num_key_value_heads": 1,
+                "num_attention_heads": 2,
+                "hidden_size": 128,
+                "max_position_embeddings": 1024,
+                "torch_dtype": "float16",
+            },
+        )
+        workflow_result = ModelPlanningResult(
+            "model-planning-result-1.0",
+            ModelPlanningStatus.NEEDS_MODEL_INPUTS,
+            draft,
+            None,
+        )
+        fixtures = ROOT / "docs" / "fixtures"
+        with patch(
+            "inference_capacity_contract.cli.plan_huggingface_model",
+            return_value=workflow_result,
+        ) as workflow:
+            with patch("sys.stdout") as stdout:
+                result = main(
+                    [
+                        "plan-model",
+                        "--repo-id",
+                        "example/model",
+                        "--providers",
+                        str(fixtures / "provider-inventory.json"),
+                        "--runtimes",
+                        str(fixtures / "runtime-inventory.json"),
+                        "--load",
+                        str(fixtures / "load-provider-plan.json"),
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            json.loads("".join(call.args[0] for call in stdout.write.call_args_list)), workflow_result.to_dict()
+        )
+        self.assertEqual(workflow.call_args.args[0], "example/model")
+        self.assertEqual(workflow.call_args.kwargs["revision"], "main")
+
     def test_inspect_model_defaults_to_main(self) -> None:
         draft = inspect_huggingface_config(
             "example/model",

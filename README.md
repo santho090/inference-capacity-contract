@@ -69,6 +69,7 @@ installed separately with `python -m pip install -e '.[dev]'`.
 | Which supplied hardware candidates fit? | `what_fits` | `icc fit` |
 | What can this model run on at a given context? | `explore` | `icc explore` |
 | Which provider plan satisfies this load? | `plan` | `icc plan-providers` |
+| Can I start with only a public model ID? | `plan_huggingface_model` | `icc plan-model` |
 | How many replicas does a measured workload need? | `recommend_scale` | `icc scale` |
 | Is this complete TP/DP/EP and llm-d recipe good for this load? | `audit_recipe` | `icc audit` |
 | What can be checked before all recipe facts are known? | `audit_recipe_draft` | `icc import-llmd`, `icc audit-draft` |
@@ -263,6 +264,28 @@ Planning from `model-manifest.json` is fully offline. The offline
 `import-model-manifest` command still requires a commit SHA because it cannot
 verify a floating reference from caller-fetched files.
 
+For the shortest model-to-plan workflow, supply a public model ID and your own
+provider, runtime, and load inventories:
+
+```bash
+icc plan-model \
+  --repo-id HuggingFaceTB/SmolLM2-135M \
+  --providers providers.json \
+  --runtimes runtimes.json \
+  --load load.json \
+  --cache-dir .icc-cache
+```
+
+The result has one of two states:
+
+- `planned` contains the normal ranked `capacity-plan-1.0` result;
+- `needs-model-inputs` contains a pinned `model-resolution-draft-1.0` with the
+  exact overrides still required.
+
+An incomplete model is a normal result, not a failed command. Invalid inputs,
+network failures, and inconsistent metadata still fail. This keeps automation
+simple while preventing unresolved memory facts from reaching the planner.
+
 For environments that fetch metadata themselves, use
 `import_huggingface_manifest` or the CLI:
 
@@ -299,6 +322,20 @@ icc inspect-model \
 
 The output includes the current immutable revision. Pass that SHA back with
 `--revision` when repeatability matters across runs.
+
+The same Kimi check can start the complete provider workflow:
+
+```bash
+icc plan-model \
+  --repo-id moonshotai/Kimi-K3 \
+  --providers providers.json \
+  --runtimes runtimes.json \
+  --load load.json
+```
+
+With config metadata alone, it returns `needs-model-inputs` for logical
+parameter count, measured per-device KV bytes/token, and measured resident
+weight bytes. It does not produce a provider ranking from guessed values.
 
 Supply `--parameter-count`, `--kv-bytes-per-token-per-device`, and
 `--resident-weight-bytes` from authoritative model and initialization evidence
