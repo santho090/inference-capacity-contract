@@ -7,7 +7,7 @@
   "properties": {
     "schema_version": {"const": "capacity-exploration-1.0"},
     "model": {
-      "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/model"
+      "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-3.0.schema.json#/$defs/model"
     },
     "model_manifest": {
       "oneOf": [
@@ -56,7 +56,14 @@
         "provider": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/provider-inventory-1.0.schema.json#/$defs/provider_instance"},
         "runtime_option": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/runtime-inventory-1.0.schema.json#/$defs/runtime_option"},
         "status": {"enum": ["fits", "feasible", "incomplete", "insufficient-inventory", "rejected"]},
-        "confidence": {"enum": ["analytical-memory", "analytical-memory+measured-performance"]},
+        "confidence": {
+          "enum": [
+            "analytical-memory",
+            "analytical-memory+measured-performance",
+            "context-bound-runtime-capacity",
+            "context-bound-runtime-capacity+measured-performance"
+          ]
+        },
         "context_tokens": {"type": "integer", "minimum": 1},
         "recipe_variant_fingerprint": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$"},
         "sequences_per_replica": {"type": "integer", "minimum": 0},
@@ -69,7 +76,7 @@
         "cost_currency": {"type": ["string", "null"], "pattern": "^[A-Z]{3}$"},
         "rejection_reasons": {"type": "array", "items": {"type": "string"}},
         "warnings": {"type": "array", "items": {"type": "string"}},
-        "contract": {"oneOf": [{"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json"}, {"type": "null"}]},
+        "contract": {"oneOf": [{"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-3.0.schema.json"}, {"type": "null"}]},
         "single_group_audit": {"oneOf": [{"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/recipe-audit-2.0.schema.json"}, {"type": "null"}]}
       },
       "additionalProperties": false

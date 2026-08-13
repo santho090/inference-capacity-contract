@@ -67,7 +67,6 @@ class ModelPlanningWorkflowTests(unittest.TestCase):
             {item.path for item in result.model_resolution.unresolved},
             {
                 "parameter_count_override",
-                "kv_bytes_per_token_per_device_override",
                 "resident_weight_bytes_override",
             },
         )
@@ -117,6 +116,40 @@ class ModelPlanningWorkflowTests(unittest.TestCase):
                 None,
                 replace(result.capacity_plan, model_manifest=None),
             )
+
+    def test_complete_hybrid_model_still_requires_runtime_capacity(self) -> None:
+        def fetch(url: str) -> dict[str, object]:
+            if url.endswith("config.json"):
+                return {
+                    "num_hidden_layers": 2,
+                    "num_key_value_heads": 2,
+                    "num_attention_heads": 2,
+                    "hidden_size": 128,
+                    "max_position_embeddings": 8192,
+                    "linear_attn_config": {"head_dim": 64},
+                    "quantization_config": {"bits": 4, "ignore": ["lm_head"]},
+                }
+            if url.endswith("model.safetensors.index.json"):
+                return {"metadata": {"total_size": 2048}}
+            self.fail(f"unexpected model metadata request: {url}")
+
+        result = plan_huggingface_model(
+            "example/hybrid",
+            self.providers,
+            self.runtimes,
+            self.load,
+            revision=PINNED_REVISION,
+            parameter_count_override=1000,
+            resident_weight_bytes_override=2048,
+            fetch_json=fetch,
+            inspect_safetensors_headers=False,
+        )
+
+        self.assertEqual(result.status, ModelPlanningStatus.PLANNED)
+        assert result.capacity_plan is not None
+        self.assertTrue(result.capacity_plan.candidates)
+        for candidate in result.capacity_plan.candidates:
+            self.assertIn("runtime KV capacity envelope", " ".join(candidate.rejection_reasons))
 
     def test_result_rejects_mixed_or_empty_states(self) -> None:
         with self.assertRaisesRegex(ContractError, "requires one unresolved"):

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.0
+
+- Adds `capacity-contract-3.0` with separate linear and exact context-envelope
+  KV capacity modes.
+- Refuses scalar KV bytes/token overrides for hybrid, MLA, custom, and sub-byte
+  cache layouts.
+- Binds context-envelope capacity to the exact hardware ID and available KV
+  memory budget.
+- Adds `vllm-initialization-profile-2.0` with context-specific sequence
+  capacity, `max_num_seqs`, and a canonical evidence digest.
+- Keeps runtime-specific hybrid KV facts out of static model manifests.
+- Makes Kimi K3 model inspection require only unresolved model facts; runtime
+  capacity is supplied later by the matching runtime inventory.
+- Reports context-envelope capacity as a runtime sequence limit without
+  inventing a scalar KV-token budget.
+- Labels context-bound runtime capacity separately from analytical memory and
+  measured serving performance.
+- Versions llm-d and scaling-policy adapter payloads as 3.0.
+- Retains the 2.0 capacity contract and 1.0 initialization profile as
+  historical schemas.
+
 ## 0.5.0
 
 - Makes serving-recipe group sizing honor the block-aligned llm-d flow-control

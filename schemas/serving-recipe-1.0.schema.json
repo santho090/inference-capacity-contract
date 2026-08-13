@@ -7,9 +7,9 @@
   "properties": {
     "schema_version": {"const": "serving-recipe-1.0"},
     "recipe_id": {"type": "string", "minLength": 1},
-    "model": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/model"},
-    "host": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/hardware"},
-    "runtime": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/runtime"},
+    "model": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-3.0.schema.json#/$defs/model"},
+    "host": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-3.0.schema.json#/$defs/hardware"},
+    "runtime": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-3.0.schema.json#/$defs/runtime"},
     "topology": {
       "type": "object",
       "required": ["tensor_parallel_size", "data_parallel_size", "expert_parallel_size", "physical_device_count", "independent_kv_ranks"],
@@ -39,7 +39,7 @@
     "evidence": {
       "type": "array",
       "minItems": 1,
-      "items": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/evidence"}
+      "items": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-3.0.schema.json#/$defs/evidence"}
     }
   },
   "additionalProperties": false

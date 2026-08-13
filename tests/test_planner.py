@@ -19,6 +19,7 @@ from inference_capacity_contract import (
     ProviderInstanceSpec,
     ProviderInventory,
     RuntimeInventory,
+    RuntimeKVCapacityPoint,
     RuntimeOption,
     RuntimeVariant,
     explore,
@@ -436,7 +437,6 @@ class PlannerTests(unittest.TestCase):
             weight_dtype="bf16",
             max_model_len=1_048_576,
             attention_type="mla",
-            kv_bytes_per_token_per_device_override=4096,
         )
         runtime = _runtime(
             runtime_id="runtime-tp8-ep8",
@@ -446,6 +446,9 @@ class PlannerTests(unittest.TestCase):
                 "weight_bytes_per_device_override": 60 * GIB,
                 "max_num_seqs": 24,
                 "block_size_tokens": 1536,
+                "kv_capacity_hardware_id": "provider-a/region-1/accelerator-288gb-x8#devices=8",
+                "kv_capacity_memory_bytes_per_device": (288 * GIB * 9) // 10 - 63 * GIB,
+                "kv_capacity_envelope_override": (RuntimeKVCapacityPoint(1_048_576, 24),),
             },
             expert_parallel_size=8,
             routing=LLMDRoutingSpec(
@@ -464,6 +467,7 @@ class PlannerTests(unittest.TestCase):
 
         candidate = result.candidates[0]
         self.assertEqual(candidate.status, CandidateStatus.FEASIBLE)
+        self.assertEqual(candidate.confidence, "context-bound-runtime-capacity")
         self.assertEqual(candidate.single_group_audit.status, AuditStatus.INSUFFICIENT)  # type: ignore[union-attr]
         self.assertEqual(candidate.sequences_per_replica, 2)
         self.assertEqual(candidate.resource_claim.serving_replicas, 19)  # type: ignore[union-attr]

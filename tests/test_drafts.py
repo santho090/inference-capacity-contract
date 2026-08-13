@@ -81,7 +81,9 @@ class RecipeDraftTests(unittest.TestCase):
         self.assertEqual(draft.document["topology"]["expert_parallel_size"], 8)
         self.assertIn("model.revision", draft.unresolved_paths)
         self.assertIn("runtime.weight_bytes_per_device_override", draft.unresolved_paths)
-        self.assertIn("model.kv_bytes_per_token_per_device_override", draft.unresolved_paths)
+        self.assertIn("runtime.kv_capacity_hardware_id", draft.unresolved_paths)
+        self.assertIn("runtime.kv_capacity_memory_bytes_per_device", draft.unresolved_paths)
+        self.assertIn("runtime.kv_capacity_envelope_override", draft.unresolved_paths)
         self.assertIn("llmd.precise_prefix_routing", draft.unresolved_paths)
         self.assertNotIn("model.model_id", draft.unresolved_paths)
         self.assertNotIn("host.hardware_id", draft.unresolved_paths)
@@ -279,7 +281,7 @@ class RecipeDraftTests(unittest.TestCase):
             }
         )
         self.assertEqual(completed.document["runtime"]["version"], "0.8.5")
-        self.assertNotIn("model.kv_bytes_per_token_per_device_override", completed.unresolved_paths)
+        self.assertNotIn("runtime.kv_capacity_envelope_override", completed.unresolved_paths)
         self.assertNotIn("runtime.weight_bytes_per_device_override", completed.unresolved_paths)
 
 

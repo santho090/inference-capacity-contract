@@ -10,9 +10,12 @@
   "memory_utilization_limit": 0.96,
   "kv_cache_dtype": "fp8",
   "block_size_tokens": 1536,
+  "max_num_seqs": 24,
   "weight_bytes_per_device": 64424509440,
   "runtime_overhead_bytes_per_device": 2147483648,
   "activation_reserve_bytes_per_device": 4294967296,
-  "kv_bytes_per_token_per_device": 4096,
-  "kv_capacity_tokens_per_device": 55174656
+  "kv_capacity_memory_bytes_per_device": 226001179115,
+  "kv_capacity_envelope": [
+    {"context_tokens": 1048576, "max_sequences": 24}
+  ]
 }

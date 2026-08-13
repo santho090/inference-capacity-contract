@@ -17,7 +17,14 @@ from urllib.parse import quote, urlparse
 
 from .calculator import capacity_for
 from .drafts import RecipeDraft, UnresolvedFact
-from .models import DTYPE_BITS, ContractError, EvidenceKind, EvidenceRecord, ModelSpec
+from .models import (
+    DTYPE_BITS,
+    ContractError,
+    EvidenceKind,
+    EvidenceRecord,
+    ModelSpec,
+    RuntimeKVCapacityPoint,
+)
 from .recipe import (
     RECIPE_VARIANT_FINGERPRINT_VERSION,
     MeasuredGroupProfile,
@@ -495,6 +502,10 @@ def inspect_huggingface_config(
         parameter_count = _positive_int("parameter_count", parameter_count)
     if kv_bytes_per_token_per_device_override is not None:
         _positive_int("kv_bytes_per_token_per_device_override", kv_bytes_per_token_per_device_override)
+        if attention_type in {"custom", "hybrid", "mla"}:
+            raise ContractError(
+                "custom, hybrid, and MLA cache capacity belongs in an exact runtime initialization profile"
+            )
     if resident_weight_bytes_override is not None:
         _positive_int("resident_weight_bytes_override", resident_weight_bytes_override)
     facts: dict[str, Any] = {
@@ -558,14 +569,6 @@ def inspect_huggingface_config(
     ):
         if value is None:
             unresolved.append(UnresolvedFact(path, reason, required_for))
-    if attention_type in {"custom", "hybrid", "mla"} and kv_bytes_per_token_per_device_override is None:
-        unresolved.append(
-            UnresolvedFact(
-                "kv_bytes_per_token_per_device_override",
-                "custom cache layout requires measured per-device KV bytes per token",
-                "memory",
-            )
-        )
     if (
         (quantization is not None and quantization_bits not in (4, 8))
         or (weight_dtype is not None and weight_dtype not in DTYPE_BITS)
@@ -1084,6 +1087,11 @@ def resolve_huggingface_manifest(
     return manifest
 
 
+def _kv_capacity_envelope_digest(points: tuple[RuntimeKVCapacityPoint, ...]) -> str:
+    payload = json.dumps([point.to_dict() for point in points], separators=(",", ":"), sort_keys=True)
+    return f"sha256:{hashlib.sha256(payload.encode()).hexdigest()}"
+
+
 @dataclass(frozen=True, slots=True)
 class VLLMInitializationProfile:
     schema_version: str
@@ -1098,15 +1106,16 @@ class VLLMInitializationProfile:
     memory_utilization_limit: float
     kv_cache_dtype: str
     block_size_tokens: int
+    max_num_seqs: int
     weight_bytes_per_device: int
     runtime_overhead_bytes_per_device: int
     activation_reserve_bytes_per_device: int
-    kv_bytes_per_token_per_device: int
-    kv_capacity_tokens_per_device: int
+    kv_capacity_memory_bytes_per_device: int
+    kv_capacity_envelope: tuple[RuntimeKVCapacityPoint, ...]
     evidence: EvidenceRecord
 
     def __post_init__(self) -> None:
-        if self.schema_version != "vllm-initialization-profile-1.0":
+        if self.schema_version != "vllm-initialization-profile-2.0":
             raise ContractError("unsupported vLLM initialization profile schema_version")
         for name in ("model_revision", "hardware_id", "runtime_engine", "runtime_version", "kv_cache_dtype"):
             _required_string(name, getattr(self, name))
@@ -1118,9 +1127,9 @@ class VLLMInitializationProfile:
             "expert_parallel_size",
             "physical_device_count",
             "block_size_tokens",
+            "max_num_seqs",
             "weight_bytes_per_device",
-            "kv_bytes_per_token_per_device",
-            "kv_capacity_tokens_per_device",
+            "kv_capacity_memory_bytes_per_device",
         ):
             _positive_int(name, getattr(self, name))
         for name in ("runtime_overhead_bytes_per_device", "activation_reserve_bytes_per_device"):
@@ -1133,6 +1142,23 @@ class VLLMInitializationProfile:
             raise ContractError("initialization TP x DP exceeds physical_device_count")
         if engine_ranks % self.expert_parallel_size:
             raise ContractError("initialization expert_parallel_size must divide TP x DP")
+        envelope = tuple(self.kv_capacity_envelope)
+        if not envelope:
+            raise ContractError("initialization KV capacity envelope cannot be empty")
+        if any(not isinstance(point, RuntimeKVCapacityPoint) for point in envelope):
+            raise ContractError("initialization KV capacity envelope contains an invalid point")
+        previous_context = 0
+        previous_sequences: int | None = None
+        for point in envelope:
+            if point.context_tokens <= previous_context:
+                raise ContractError("initialization KV capacity contexts must be strictly increasing")
+            if previous_sequences is not None and point.max_sequences > previous_sequences:
+                raise ContractError("initialization KV sequence capacity cannot increase with context")
+            if point.max_sequences > self.max_num_seqs:
+                raise ContractError("initialization KV capacity cannot exceed max_num_seqs")
+            previous_context = point.context_tokens
+            previous_sequences = point.max_sequences
+        object.__setattr__(self, "kv_capacity_envelope", envelope)
         if self.evidence.kind != EvidenceKind.MEASURED:
             raise ContractError("vLLM initialization profile requires measured evidence")
         claim = {
@@ -1147,11 +1173,12 @@ class VLLMInitializationProfile:
             "memory_utilization_limit": self.memory_utilization_limit,
             "kv_cache_dtype": self.kv_cache_dtype,
             "block_size_tokens": self.block_size_tokens,
+            "max_num_seqs": self.max_num_seqs,
             "weight_bytes_per_device": self.weight_bytes_per_device,
             "runtime_overhead_bytes_per_device": self.runtime_overhead_bytes_per_device,
             "activation_reserve_bytes_per_device": self.activation_reserve_bytes_per_device,
-            "kv_bytes_per_token_per_device": self.kv_bytes_per_token_per_device,
-            "kv_capacity_tokens_per_device": self.kv_capacity_tokens_per_device,
+            "kv_capacity_memory_bytes_per_device": self.kv_capacity_memory_bytes_per_device,
+            "kv_capacity_envelope_digest": _kv_capacity_envelope_digest(envelope),
         }
         if any(self.evidence.metrics.get(name) != value for name, value in claim.items()):
             raise ContractError("initialization evidence must bind its exact identity and every memory metric")
@@ -1170,11 +1197,12 @@ class VLLMInitializationProfile:
             "memory_utilization_limit": self.memory_utilization_limit,
             "kv_cache_dtype": self.kv_cache_dtype,
             "block_size_tokens": self.block_size_tokens,
+            "max_num_seqs": self.max_num_seqs,
             "weight_bytes_per_device": self.weight_bytes_per_device,
             "runtime_overhead_bytes_per_device": self.runtime_overhead_bytes_per_device,
             "activation_reserve_bytes_per_device": self.activation_reserve_bytes_per_device,
-            "kv_bytes_per_token_per_device": self.kv_bytes_per_token_per_device,
-            "kv_capacity_tokens_per_device": self.kv_capacity_tokens_per_device,
+            "kv_capacity_memory_bytes_per_device": self.kv_capacity_memory_bytes_per_device,
+            "kv_capacity_envelope": [point.to_dict() for point in self.kv_capacity_envelope],
             "evidence": self.evidence.to_dict(),
         }
 
@@ -1183,6 +1211,11 @@ class VLLMInitializationProfile:
         evidence = data.get("evidence")
         if not isinstance(evidence, Mapping):
             raise ContractError("initialization evidence must be an object")
+        raw_envelope = data.get("kv_capacity_envelope")
+        if not isinstance(raw_envelope, list):
+            raise ContractError("kv_capacity_envelope must be an array")
+        if any(not isinstance(point, Mapping) for point in raw_envelope):
+            raise ContractError("kv_capacity_envelope must contain objects")
         return cls(
             schema_version=_required_string("schema_version", data.get("schema_version")),
             model_revision=_required_string("model_revision", data.get("model_revision")),
@@ -1196,6 +1229,7 @@ class VLLMInitializationProfile:
             memory_utilization_limit=_positive_number("memory_utilization_limit", data.get("memory_utilization_limit")),
             kv_cache_dtype=_required_string("kv_cache_dtype", data.get("kv_cache_dtype")),
             block_size_tokens=_positive_int("block_size_tokens", data.get("block_size_tokens")),
+            max_num_seqs=_positive_int("max_num_seqs", data.get("max_num_seqs")),
             weight_bytes_per_device=_positive_int("weight_bytes_per_device", data.get("weight_bytes_per_device")),
             runtime_overhead_bytes_per_device=_non_negative_int(
                 "runtime_overhead_bytes_per_device", data.get("runtime_overhead_bytes_per_device")
@@ -1203,12 +1237,10 @@ class VLLMInitializationProfile:
             activation_reserve_bytes_per_device=_non_negative_int(
                 "activation_reserve_bytes_per_device", data.get("activation_reserve_bytes_per_device")
             ),
-            kv_bytes_per_token_per_device=_positive_int(
-                "kv_bytes_per_token_per_device", data.get("kv_bytes_per_token_per_device")
+            kv_capacity_memory_bytes_per_device=_positive_int(
+                "kv_capacity_memory_bytes_per_device", data.get("kv_capacity_memory_bytes_per_device")
             ),
-            kv_capacity_tokens_per_device=_positive_int(
-                "kv_capacity_tokens_per_device", data.get("kv_capacity_tokens_per_device")
-            ),
+            kv_capacity_envelope=tuple(RuntimeKVCapacityPoint.from_dict(point) for point in raw_envelope),
             evidence=EvidenceRecord.from_dict(evidence),
         )
 
@@ -1229,6 +1261,7 @@ def import_vllm_initialization(data: Mapping[str, Any], *, source: str) -> VLLMI
         "memory_utilization_limit": _positive_number("memory_utilization_limit", data.get("memory_utilization_limit")),
         "kv_cache_dtype": _required_string("kv_cache_dtype", data.get("kv_cache_dtype")),
         "block_size_tokens": _positive_int("block_size_tokens", data.get("block_size_tokens")),
+        "max_num_seqs": _positive_int("max_num_seqs", data.get("max_num_seqs")),
     }
     if float(identities["memory_utilization_limit"]) > 1:
         raise ContractError("memory_utilization_limit must be in (0, 1]")
@@ -1240,22 +1273,30 @@ def import_vllm_initialization(data: Mapping[str, Any], *, source: str) -> VLLMI
         "activation_reserve_bytes_per_device": _non_negative_int(
             "activation_reserve_bytes_per_device", data.get("activation_reserve_bytes_per_device")
         ),
-        "kv_bytes_per_token_per_device": _positive_int(
-            "kv_bytes_per_token_per_device", data.get("kv_bytes_per_token_per_device")
-        ),
-        "kv_capacity_tokens_per_device": _positive_int(
-            "kv_capacity_tokens_per_device", data.get("kv_capacity_tokens_per_device")
+        "kv_capacity_memory_bytes_per_device": _positive_int(
+            "kv_capacity_memory_bytes_per_device", data.get("kv_capacity_memory_bytes_per_device")
         ),
     }
+    raw_envelope = data.get("kv_capacity_envelope")
+    if not isinstance(raw_envelope, list):
+        raise ContractError("kv_capacity_envelope must be an array")
+    if any(not isinstance(point, Mapping) for point in raw_envelope):
+        raise ContractError("kv_capacity_envelope must contain objects")
+    envelope = tuple(RuntimeKVCapacityPoint.from_dict(point) for point in raw_envelope)
     evidence = EvidenceRecord(
         evidence_id="vllm-initialization-profile",
         kind=EvidenceKind.MEASURED,
         source=source_value,
         scope=f"vLLM initialization for model revision {revision}",
-        metrics={"model_revision": revision, **identities, **fields},
+        metrics={
+            "model_revision": revision,
+            **identities,
+            **fields,
+            "kv_capacity_envelope_digest": _kv_capacity_envelope_digest(envelope),
+        },
     )
     return VLLMInitializationProfile(
-        "vllm-initialization-profile-1.0",
+        "vllm-initialization-profile-2.0",
         revision,
         str(identities["hardware_id"]),
         str(identities["runtime_engine"]),
@@ -1267,11 +1308,12 @@ def import_vllm_initialization(data: Mapping[str, Any], *, source: str) -> VLLMI
         float(identities["memory_utilization_limit"]),
         str(identities["kv_cache_dtype"]),
         int(identities["block_size_tokens"]),
+        int(identities["max_num_seqs"]),
         fields["weight_bytes_per_device"],
         fields["runtime_overhead_bytes_per_device"],
         fields["activation_reserve_bytes_per_device"],
-        fields["kv_bytes_per_token_per_device"],
-        fields["kv_capacity_tokens_per_device"],
+        fields["kv_capacity_memory_bytes_per_device"],
+        envelope,
         evidence,
     )
 
@@ -1307,6 +1349,7 @@ def materialize_recipe_draft(
         "memory_utilization_limit": recipe_number(draft, "host.memory_utilization_limit"),
         "kv_cache_dtype": recipe_string(draft, "runtime.kv_cache_dtype"),
         "block_size_tokens": recipe_integer(draft, "runtime.block_size_tokens"),
+        "max_num_seqs": recipe_integer(draft, "runtime.max_num_seqs"),
     }
     for name, expected in expected_identity.items():
         if getattr(initialization, name) != expected:
@@ -1319,23 +1362,33 @@ def materialize_recipe_draft(
         "model": {
             **manifest.model.to_dict(),
             "max_model_len": configured_max_model_len,
-            "kv_bytes_per_token_per_device_override": initialization.kv_bytes_per_token_per_device,
+            "kv_bytes_per_token_per_device_override": None,
         },
         "runtime": {
             "weight_bytes_per_device_override": initialization.weight_bytes_per_device,
             "runtime_overhead_bytes_per_device": initialization.runtime_overhead_bytes_per_device,
             "activation_reserve_bytes_per_device": initialization.activation_reserve_bytes_per_device,
+            "kv_capacity_hardware_id": initialization.hardware_id,
+            "kv_capacity_memory_bytes_per_device": initialization.kv_capacity_memory_bytes_per_device,
+            "kv_capacity_envelope_override": [point.to_dict() for point in initialization.kv_capacity_envelope],
         },
         "llmd": {"precise_prefix_routing": precise_prefix_routing},
         "evidence": evidence,
     }
     recipe = draft.to_serving_recipe(overrides)
     rank_hardware = replace(recipe.host, device_count=recipe.topology.tensor_parallel_size)
-    contract = capacity_for(recipe.model, rank_hardware, recipe.runtime)
-    if contract.kv_capacity_tokens_per_device != initialization.kv_capacity_tokens_per_device:
-        raise ContractError(
-            "initialization KV capacity does not reconcile with weights, reserves, KV bytes/token, and block size"
-        )
+    contract = capacity_for(
+        recipe.model,
+        rank_hardware,
+        recipe.runtime,
+        context_points=tuple(
+            point.context_tokens
+            for point in initialization.kv_capacity_envelope
+            if point.context_tokens <= configured_max_model_len
+        ),
+    )
+    if not contract.fits:
+        raise ContractError("initialization KV capacity does not match the recipe memory and hardware identity")
     return recipe
 
 

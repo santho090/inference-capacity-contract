@@ -16,7 +16,7 @@ from .inventory import (
     RuntimeInventory,
     RuntimeOption,
 )
-from .models import CapacityContract, ContractError, EvidenceKind, EvidenceRecord, ModelSpec
+from .models import CapacityContract, ContractError, EvidenceKind, EvidenceRecord, KVCapacityMode, ModelSpec
 from .recipe import AuditStatus, LoadRequirement, ParallelTopology, RecipeAudit, ServingRecipe, audit_recipe
 
 
@@ -321,7 +321,12 @@ def _evaluate(
             replicas_per_instance,
         )
     try:
-        contract = capacity_for(model, provider.hardware_slice(tp), runtime)
+        contract = capacity_for(
+            model,
+            provider.hardware_slice(tp),
+            runtime,
+            context_points=(context_tokens,),
+        )
     except ContractError as exc:
         return _rejected(provider, runtime_option, (str(exc),), warnings, replicas_per_instance)
     warnings.extend(contract.warnings)
@@ -435,7 +440,7 @@ def _exploration_candidate(evaluation: _Evaluation, context_tokens: int) -> Solv
         provider=provider,
         runtime_option=evaluation.runtime_option,
         status=CandidateStatus.REJECTED if evaluation.rejection_reasons else CandidateStatus.FITS,
-        confidence="analytical-memory",
+        confidence=_confidence(evaluation, measured_performance=False),
         context_tokens=context_tokens,
         recipe_variant_fingerprint=None if evaluation.recipe is None else evaluation.recipe.variant_fingerprint,
         sequences_per_replica=evaluation.sequences_per_replica,
@@ -514,7 +519,7 @@ def _plan_candidate(
         provider=provider,
         runtime_option=evaluation.runtime_option,
         status=status,
-        confidence=("analytical-memory+measured-performance" if profile is not None else "analytical-memory"),
+        confidence=_confidence(evaluation, measured_performance=profile is not None),
         context_tokens=load.context_tokens,
         recipe_variant_fingerprint=evaluation.recipe.variant_fingerprint,
         sequences_per_replica=evaluation.sequences_per_replica,
@@ -530,6 +535,15 @@ def _plan_candidate(
         contract=evaluation.contract,
         single_group_audit=audit,
     )
+
+
+def _confidence(evaluation: _Evaluation, *, measured_performance: bool) -> str:
+    base = (
+        "context-bound-runtime-capacity"
+        if evaluation.contract is not None and evaluation.contract.kv_capacity_mode == KVCapacityMode.CONTEXT_ENVELOPE
+        else "analytical-memory"
+    )
+    return f"{base}+measured-performance" if measured_performance else base
 
 
 def _resource_claim(evaluation: _Evaluation, replicas: int) -> ResourceClaim:

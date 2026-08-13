@@ -105,7 +105,11 @@ def build_parser() -> argparse.ArgumentParser:
     manifest.add_argument("--revision", required=True)
     manifest.add_argument("--config", required=True)
     manifest.add_argument("--safetensors-index", required=True)
-    manifest.add_argument("--kv-bytes-per-token-per-device", type=int)
+    manifest.add_argument(
+        "--kv-bytes-per-token-per-device",
+        type=int,
+        help="linear KV override for uniform attention only",
+    )
     manifest.add_argument("--parameter-count", type=int)
     manifest.add_argument("--resident-weight-bytes", type=int)
     manifest.add_argument("--weight-dtype")
@@ -118,7 +122,11 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_model.add_argument("--repo-id", required=True)
     resolve_model.add_argument("--revision", default="main", help="branch, tag, or commit SHA (default: main)")
     resolve_model.add_argument("--cache-dir")
-    resolve_model.add_argument("--kv-bytes-per-token-per-device", type=int)
+    resolve_model.add_argument(
+        "--kv-bytes-per-token-per-device",
+        type=int,
+        help="linear KV override for uniform attention only",
+    )
     resolve_model.add_argument("--parameter-count", type=int)
     resolve_model.add_argument("--resident-weight-bytes", type=int)
     resolve_model.add_argument("--weight-dtype")
@@ -135,7 +143,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inspect_model.add_argument("--repo-id", required=True)
     inspect_model.add_argument("--revision", default="main", help="branch, tag, or commit SHA (default: main)")
-    inspect_model.add_argument("--kv-bytes-per-token-per-device", type=int)
+    inspect_model.add_argument(
+        "--kv-bytes-per-token-per-device",
+        type=int,
+        help="linear KV override for uniform attention only",
+    )
     inspect_model.add_argument("--parameter-count", type=int)
     inspect_model.add_argument("--resident-weight-bytes", type=int)
     inspect_model.add_argument("--weight-dtype")
@@ -211,7 +223,11 @@ def build_parser() -> argparse.ArgumentParser:
     model_plan.add_argument("--load", required=True)
     model_plan.add_argument("--measurements")
     model_plan.add_argument("--cache-dir")
-    model_plan.add_argument("--kv-bytes-per-token-per-device", type=int)
+    model_plan.add_argument(
+        "--kv-bytes-per-token-per-device",
+        type=int,
+        help="linear KV override for uniform attention only",
+    )
     model_plan.add_argument("--parameter-count", type=int)
     model_plan.add_argument("--resident-weight-bytes", type=int)
     model_plan.add_argument("--weight-dtype")
@@ -245,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
             runtime = RuntimeVariant.from_dict(_read(args.runtime))
             _write(
                 {
-                    "schema_version": "capacity-contract-fit-2.0",
+                    "schema_version": "capacity-contract-fit-3.0",
                     "candidates": [item.to_dict() for item in what_fits(model, inventory, runtime)],
                 },
                 args.output,

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inference-capacity-contract"
-version = "0.5.0"
+version = "0.6.0"
 description = "Deterministic, evidence-aware capacity contracts for LLM model and hardware fit"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -49,3 +49,6 @@ warn_unused_ignores = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/inference_capacity_contract"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"schemas" = "inference_capacity_contract/schemas"

@@ -14,6 +14,7 @@ from inference_capacity_contract import (
     HardwareInventory,
     HardwareSpec,
     ModelSpec,
+    RuntimeKVCapacityPoint,
     RuntimeVariant,
     WorkloadProfile,
     capacity_for,
@@ -142,6 +143,36 @@ class InputValidationTests(unittest.TestCase):
         for changes in invalid_runtime_changes:
             with self.subTest(runtime=changes), self.assertRaises(ContractError):
                 replace(_runtime(), **changes)  # type: ignore[arg-type]
+
+        point = RuntimeKVCapacityPoint(1024, 8)
+        with self.assertRaisesRegex(ContractError, "requires its hardware ID"):
+            replace(_runtime(), kv_capacity_envelope_override=(point,))
+        with self.assertRaisesRegex(ContractError, "require an envelope"):
+            replace(_runtime(), kv_capacity_hardware_id="gpu", kv_capacity_memory_bytes_per_device=100)
+        with self.assertRaisesRegex(ContractError, "strictly increasing"):
+            replace(
+                _runtime(),
+                kv_capacity_hardware_id="gpu",
+                kv_capacity_memory_bytes_per_device=100,
+                kv_capacity_envelope_override=(point, point),
+            )
+        with self.assertRaisesRegex(ContractError, "cannot increase"):
+            replace(
+                _runtime(),
+                kv_capacity_hardware_id="gpu",
+                kv_capacity_memory_bytes_per_device=100,
+                kv_capacity_envelope_override=(point, RuntimeKVCapacityPoint(2048, 9)),
+            )
+        with self.assertRaisesRegex(ContractError, "cannot exceed max_num_seqs"):
+            replace(
+                _runtime(),
+                max_num_seqs=4,
+                kv_capacity_hardware_id="gpu",
+                kv_capacity_memory_bytes_per_device=100,
+                kv_capacity_envelope_override=(point,),
+            )
+        with self.assertRaises(ContractError):
+            RuntimeKVCapacityPoint(1024, 0)
 
         runtime_data = _runtime().to_dict()
         runtime_data["data_parallel_size"] = 2

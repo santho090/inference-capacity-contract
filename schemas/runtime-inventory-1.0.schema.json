@@ -22,7 +22,7 @@
       "properties": {
         "runtime_id": {"type": "string", "minLength": 1},
         "runtime": {
-          "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/runtime"
+          "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-3.0.schema.json#/$defs/runtime"
         },
         "source": {"type": "string", "minLength": 1},
         "expert_parallel_size": {"type": "integer", "minimum": 1},

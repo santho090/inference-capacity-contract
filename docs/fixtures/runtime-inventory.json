@@ -14,6 +14,9 @@
         "activation_reserve_bytes_per_device": 2147483648,
         "max_num_seqs": 128,
         "block_size_tokens": 16,
+        "kv_capacity_hardware_id": null,
+        "kv_capacity_memory_bytes_per_device": null,
+        "kv_capacity_envelope_override": [],
         "supported_vendors": ["nvidia", "amd"],
         "notes": []
       },

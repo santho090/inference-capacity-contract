@@ -22,7 +22,7 @@
   "properties": {
     "schema_version": {"const": "scaling-recommendation-2.0"},
     "contract": {
-      "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json"
+      "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-3.0.schema.json"
     },
     "profile": {"$ref": "#/$defs/profile"},
     "required_replicas": {"type": "integer", "minimum": 0},
@@ -106,7 +106,7 @@
         "evidence": {
           "type": "array",
           "items": {
-            "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/evidence"
+            "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-3.0.schema.json#/$defs/evidence"
           }
         }
       },

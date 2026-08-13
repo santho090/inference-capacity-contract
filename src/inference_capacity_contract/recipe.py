@@ -593,7 +593,7 @@ class RecipeAudit:
     analytical_sequences_per_group: int
     sequence_capacity_limits: Mapping[str, int]
     effective_sequences_per_group: int
-    calculated_kv_tokens_per_group: int
+    calculated_kv_tokens_per_group: int | None
     calculated_max_concurrent_sequences: int
     configured_devices: int
     required_groups: int | None
@@ -664,19 +664,26 @@ def audit_recipe(recipe: ServingRecipe, load: LoadRequirement) -> RecipeAudit:
 
     per_rank_sequences = contract.max_sequences_at(load.context_tokens) if context_supported else 0
     per_group_sequences = per_rank_sequences * topology.independent_kv_ranks
-    kv_tokens_per_group = contract.kv_capacity_tokens_per_device * topology.independent_kv_ranks
-    configured_max_sequences = (recipe.runtime.max_num_seqs or 0) * topology.independent_kv_ranks
-    memory_sequences = (
-        block_aligned_sequence_capacity(
-            contract.kv_capacity_tokens_per_device,
-            contract.kv_block_size_tokens,
-            load.context_tokens,
-        )
-        * topology.independent_kv_ranks
-        if context_supported
-        else 0
+    kv_tokens_per_group = (
+        None
+        if contract.kv_capacity_tokens_per_device is None
+        else contract.kv_capacity_tokens_per_device * topology.independent_kv_ranks
     )
-    sequence_limits = {"memory": memory_sequences}
+    configured_max_sequences = (recipe.runtime.max_num_seqs or 0) * topology.independent_kv_ranks
+    if contract.kv_capacity_tokens_per_device is None:
+        sequence_limits = {"runtime_kv_envelope": per_group_sequences}
+    else:
+        memory_sequences = (
+            block_aligned_sequence_capacity(
+                contract.kv_capacity_tokens_per_device,
+                contract.kv_block_size_tokens,
+                load.context_tokens,
+            )
+            * topology.independent_kv_ranks
+            if context_supported
+            else 0
+        )
+        sequence_limits = {"memory": memory_sequences}
     if recipe.runtime.max_num_seqs is not None:
         sequence_limits["runtime"] = configured_max_sequences
     if llmd.flow_control_token_limit is not None:
@@ -706,7 +713,11 @@ def audit_recipe(recipe: ServingRecipe, load: LoadRequirement) -> RecipeAudit:
         warnings.append("llm-d flow-control token limit is not divisible by the declared KV block size")
     if llmd.precise_prefix_routing and llmd.kv_block_size_tokens is None:
         configuration_issues.append("precise prefix routing is missing its KV block size")
-    if llmd.flow_control_token_limit is not None and llmd.flow_control_token_limit > kv_tokens_per_group:
+    if (
+        llmd.flow_control_token_limit is not None
+        and kv_tokens_per_group is not None
+        and llmd.flow_control_token_limit > kv_tokens_per_group
+    ):
         configuration_issues.append("llm-d flow-control token limit exceeds calculated KV capacity")
     if llmd.max_concurrent_sequences is not None and llmd.max_concurrent_sequences != configured_max_sequences:
         configuration_issues.append("llm-d max concurrency does not match max_num_seqs x independent KV ranks")
@@ -734,7 +745,7 @@ def audit_recipe(recipe: ServingRecipe, load: LoadRequirement) -> RecipeAudit:
     drivers: dict[str, int] = {}
     incomplete: list[str] = []
     if usable_profile is not None and usable_profile.concurrent_sequences is not None:
-        sequence_limits["measured"] = usable_profile.concurrent_sequences
+        sequence_limits["measured_profile"] = usable_profile.concurrent_sequences
     effective_sequences = min(sequence_limits.values())
     needs_sequence_capacity = any(
         (
@@ -817,7 +828,7 @@ def audit_recipe(recipe: ServingRecipe, load: LoadRequirement) -> RecipeAudit:
         suggestions.append("attach a measured profile for every non-zero traffic or latency requirement")
     if llmd.flow_control_token_limit is None:
         suggestions.append("set and audit an llm-d flow-control token limit")
-    elif llmd.flow_control_token_limit < kv_tokens_per_group:
+    elif kv_tokens_per_group is None or llmd.flow_control_token_limit < kv_tokens_per_group:
         suggestions.append("validate the llm-d flow-control headroom against queueing and latency measurements")
     if topology.expert_parallel_size > 1:
         suggestions.append("refresh per-device resident weight bytes whenever the EP layout or runtime image changes")

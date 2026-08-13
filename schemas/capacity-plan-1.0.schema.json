@@ -6,7 +6,7 @@
   "required": ["schema_version", "model", "model_manifest", "load", "objective", "candidates", "assumptions"],
   "properties": {
     "schema_version": {"const": "capacity-plan-1.0"},
-    "model": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/model"},
+    "model": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-3.0.schema.json#/$defs/model"},
     "model_manifest": {
       "oneOf": [
         {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/model-manifest-1.0.schema.json"},

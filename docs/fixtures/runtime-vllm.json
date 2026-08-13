@@ -3,10 +3,15 @@
   "version": "0.8.5",
   "tensor_parallel_size": 1,
   "kv_cache_dtype": "bf16",
+  "kv_heads_per_device": null,
   "weight_bytes_per_device_override": null,
   "runtime_overhead_bytes_per_device": 1073741824,
   "activation_reserve_bytes_per_device": 2147483648,
   "max_num_seqs": 128,
   "block_size_tokens": 16,
-  "supported_vendors": ["nvidia", "amd"]
+  "kv_capacity_hardware_id": null,
+  "kv_capacity_memory_bytes_per_device": null,
+  "kv_capacity_envelope_override": [],
+  "supported_vendors": ["nvidia", "amd"],
+  "notes": []
 }

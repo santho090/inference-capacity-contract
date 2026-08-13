@@ -32,11 +32,11 @@ icc plan-providers \
   --load docs/fixtures/load-context-concurrency.json
 ```
 
-For a peak of 30 full-context sequences at 80% target utilization, memory
-allows 52 sequences per group and the runtime allows 24, but llm-d flow control
-allows only two. The binding limit therefore requires 19 TP8 groups, or 152
-serving devices. Price and availability remain unknown because the fixture does
-not invent them.
+For a peak of 30 full-context sequences at 80% target utilization, the
+sanitized initialization envelope reports 24 sequences at the requested
+context, but llm-d flow control allows only two. The binding limit therefore
+requires 19 TP8 groups, or 152 serving devices. Price and availability remain
+unknown because the fixture does not invent them.
 
 ### Applying the shape to Kimi K3
 
@@ -46,13 +46,14 @@ an explicit value-head width of 128, a 1,048,576-token limit, hybrid attention,
 and a mixed MXFP4 checkpoint layout.
 
 That metadata does not make this sanitized TP8 fixture a measured Kimi K3
-recipe. A real run still needs three values from authoritative evidence:
+recipe. A real run still needs model and runtime evidence:
 
 - the logical parameter count, because packed SafeTensors elements are not
   logical model parameters;
 - resident weight bytes from the exact vLLM initialization and TP/EP layout;
   and
-- per-device KV bytes per token from the hybrid cache layout.
+- context-bound KV sequence capacity from the same hardware, memory budget,
+  and runtime configuration.
 
 `icc inspect-model` returns the discovered fields and missing inputs as data.
 Until those values are supplied, strict `icc resolve-model` still refuses to
@@ -85,7 +86,7 @@ fixtures intentionally omit:
 - exact architecture and quantization facts;
 - measured resident weight bytes per device;
 - measured runtime and activation reserves;
-- measured custom-cache bytes per token; and
+- measured context-bound KV capacity; and
 - throughput and latency at a defined operating point.
 
 Adding approximate download sizes or guessed throughput would make these cases

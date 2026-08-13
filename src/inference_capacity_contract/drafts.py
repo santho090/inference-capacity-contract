@@ -151,10 +151,21 @@ def _path_value(document: Mapping[str, Any], path: str) -> object:
 
 
 def _fact_is_unresolved(document: Mapping[str, Any], fact: UnresolvedFact) -> bool:
+    if fact.path == "model.kv_bytes_per_token_per_device_override":
+        return False
+    if fact.path in {
+        "runtime.kv_capacity_hardware_id",
+        "runtime.kv_capacity_memory_bytes_per_device",
+        "runtime.kv_capacity_envelope_override",
+    }:
+        if _path_value(document, "model.attention_type") in {"mha", "gqa", "mqa"}:
+            return False
+        value = _path_value(document, fact.path)
+        if fact.path == "runtime.kv_capacity_envelope_override":
+            return not isinstance(value, (list, tuple)) or not value
+        return value is None
     if _path_value(document, fact.path) is not None:
         return False
-    if fact.path == "model.kv_bytes_per_token_per_device_override":
-        return _path_value(document, "model.attention_type") not in {"mha", "gqa", "mqa"}
     if fact.path == "runtime.weight_bytes_per_device_override":
         return _path_value(document, "topology.expert_parallel_size") != 1
     return True
@@ -169,11 +180,6 @@ _REQUIRED_FACTS = (
     ("model.head_dim", "model architecture metadata is absent", "memory"),
     ("model.weight_dtype", "artifact dtype is absent", "memory"),
     ("model.attention_type", "attention layout is absent", "memory"),
-    (
-        "model.kv_bytes_per_token_per_device_override",
-        "custom, MLA, and hybrid cache layouts need a measured per-device KV value",
-        "memory",
-    ),
     ("host.hardware_id", "host inventory metadata is absent", "topology"),
     ("runtime.engine", "runtime image is absent", "identity"),
     ("runtime.version", "runtime image version is absent", "identity"),
@@ -186,6 +192,21 @@ _REQUIRED_FACTS = (
     ),
     ("runtime.runtime_overhead_bytes_per_device", "measured runtime reserve is absent", "memory"),
     ("runtime.activation_reserve_bytes_per_device", "measured activation reserve is absent", "memory"),
+    (
+        "runtime.kv_capacity_hardware_id",
+        "custom, MLA, and hybrid cache capacity must identify the measured hardware",
+        "memory",
+    ),
+    (
+        "runtime.kv_capacity_memory_bytes_per_device",
+        "custom, MLA, and hybrid cache capacity must bind the measured KV memory budget",
+        "memory",
+    ),
+    (
+        "runtime.kv_capacity_envelope_override",
+        "custom, MLA, and hybrid cache layouts need exact context-bound capacity points",
+        "memory",
+    ),
     ("runtime.max_num_seqs", "runtime concurrency limit is absent", "topology"),
     ("runtime.block_size_tokens", "runtime KV block size is absent", "routing"),
     ("topology.tensor_parallel_size", "tensor parallelism is absent", "topology"),
@@ -431,6 +452,9 @@ def import_llmd_values(
             "weight_bytes_per_device_override": None,
             "runtime_overhead_bytes_per_device": None,
             "activation_reserve_bytes_per_device": None,
+            "kv_capacity_hardware_id": None,
+            "kv_capacity_memory_bytes_per_device": None,
+            "kv_capacity_envelope_override": [],
             "max_num_seqs": max_num_seqs,
             "block_size_tokens": runtime_block or llmd_block,
             "supported_vendors": [] if host is None else [host.vendor],

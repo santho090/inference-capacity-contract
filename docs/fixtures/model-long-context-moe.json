@@ -9,6 +9,6 @@
   "max_model_len": 1048576,
   "explicit_weight_bytes": null,
   "attention_type": "mla",
-  "kv_bytes_per_token_per_device_override": 4096,
+  "kv_bytes_per_token_per_device_override": null,
   "architecture": "ExampleLongContextMoEForCausalLM"
 }

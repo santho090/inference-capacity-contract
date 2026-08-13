@@ -14,6 +14,11 @@
         "activation_reserve_bytes_per_device": 4294967296,
         "max_num_seqs": 24,
         "block_size_tokens": 1536,
+        "kv_capacity_hardware_id": "example-provider/example-region/accelerator-288gb-x8#devices=8",
+        "kv_capacity_memory_bytes_per_device": 226001179115,
+        "kv_capacity_envelope_override": [
+          {"context_tokens": 1048576, "max_sequences": 24}
+        ],
         "supported_vendors": ["nvidia"],
         "notes": []
       },

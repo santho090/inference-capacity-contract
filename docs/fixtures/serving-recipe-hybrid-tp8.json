@@ -12,7 +12,7 @@
     "max_model_len": 1048576,
     "explicit_weight_bytes": 1374389534720,
     "attention_type": "custom",
-    "kv_bytes_per_token_per_device_override": 1024,
+    "kv_bytes_per_token_per_device_override": null,
     "architecture": "example-hybrid"
   },
   "host": {
@@ -35,6 +35,11 @@
     "activation_reserve_bytes_per_device": 8589934592,
     "max_num_seqs": 24,
     "block_size_tokens": 256,
+    "kv_capacity_hardware_id": "example-accelerator-288gb-x8",
+    "kv_capacity_memory_bytes_per_device": 107889578475,
+    "kv_capacity_envelope_override": [
+      {"context_tokens": 1048576, "max_sequences": 24}
+    ],
     "supported_vendors": ["nvidia"],
     "notes": ["Sanitized example; replace every reported override with facts from the exact deployment."]
   },

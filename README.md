@@ -10,8 +10,8 @@ The result is a versioned JSON contract with:
 
 - weight, runtime-reserve, activation-reserve, and KV-cache memory accounting;
 - model, vendor, and tensor-parallel topology compatibility checks;
-- per-device KV bytes/token, block budget, and token budget;
-- a context-dependent concurrency envelope instead of one misleading scalar;
+- linear KV bytes/token and block budgets for uniform attention layouts;
+- exact context-bound runtime capacity for hybrid, MLA, custom, and sub-byte caches;
 - assumptions, warnings, a validation level, and evidence sources;
 - reverse-fit results across a hardware inventory;
 - llm-d planner and scaling-policy payloads;
@@ -29,10 +29,10 @@ The result is a versioned JSON contract with:
 
 The library does not start vLLM or SGLang, discover GPUs, query provider
 catalogs, mutate a cluster, or claim throughput and latency from model
-parameters. Hugging Face resolution is optional and read-only: it accepts only
-an immutable commit SHA, fetches metadata and SafeTensors headers, and caches a
-replayable manifest. Runtime initialization and SLO performance still require
-matching measured evidence.
+parameters. Hugging Face resolution is optional and read-only: it pins a
+branch, tag, or commit to an immutable SHA, fetches metadata and SafeTensors
+headers, and caches a replayable manifest. Runtime initialization and SLO
+performance still require matching measured evidence.
 
 ## Why the contract is useful
 
@@ -119,7 +119,7 @@ print(contract.max_sequences_at(8192))  # 55: KV-memory bound
 ```
 
 The sequence limit depends on the active tokens in each sequence. For that
-reason, `capacity-contract-2.0` reports capacity by context length instead of a
+reason, `capacity-contract-3.0` reports capacity by context length instead of a
 single `max_concurrent_sequences` value.
 
 ## CLI example
@@ -190,6 +190,12 @@ before scaling. For example, a candidate can be `feasible` with a 19-group
 resource claim while its `single_group_audit` is `insufficient`. The field name
 makes the two scopes explicit.
 
+Candidate confidence also names the evidence boundary. `analytical-memory`
+uses the closed-form uniform-attention calculation.
+`context-bound-runtime-capacity` uses an exact supplied runtime point but does
+not, by itself, prove traffic or latency. A `+measured-performance` suffix
+appears only when the requested operating point has a matching benchmark.
+
 The first planner handles one model and homogeneous candidates. It does not
 split replicas across providers, stretch one TP replica across instances, or
 reserve infrastructure.
@@ -217,8 +223,8 @@ icc audit-draft --draft recipe-draft.json
 
 The draft reports every unresolved field. Topology, block-size, device-use,
 and flow-control checks run immediately. `to_serving_recipe()` remains blocked
-until the model revision, architecture, resident memory, KV layout, and runtime
-reserves are present.
+until the model revision, architecture, resident memory, runtime reserves, and
+any required exact KV-capacity envelope are present.
 
 The importer deliberately does not treat a model download size as resident GPU
 memory. A model manifest records serialized artifact bytes separately. The
@@ -295,7 +301,6 @@ icc import-model-manifest \
   --revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   --config docs/fixtures/model-config-long-context-moe.json \
   --safetensors-index docs/fixtures/model-safetensors-index-long-context-moe.json \
-  --kv-bytes-per-token-per-device 4096 \
   --output model-manifest.json
 ```
 
@@ -303,17 +308,17 @@ Quantized or mixed-dtype manifests need the logical parameter count from the
 model config or an explicit caller value. SafeTensors headers describe stored
 tensors, which may be packed and may include scale tensors; ICC records their
 element count separately. A mixed layout, including a quantization config with
-an ignore list, also needs measured resident weight bytes. Custom, hybrid, and
-MLA cache layouts need a measured KV-bytes/token override. A config that omits
-its weight dtype remains unresolved; use `--weight-dtype` rather than relying on
-an implicit BF16 default.
+an ignore list, also needs measured resident weight bytes. Custom, hybrid, MLA,
+and sub-byte cache capacity belongs to the exact runtime and hardware variant,
+not the static model manifest. A config that omits its weight dtype remains
+unresolved; use `--weight-dtype` rather than relying on an implicit BF16
+default.
 
 For example, the pinned Kimi K3 config is enough to identify its 93-layer
 hybrid text model, explicit 128-wide value heads, 1,048,576-token model limit,
-and mixed MXFP4 layout. It is not enough to derive the logical parameter count,
-the runtime's hybrid KV bytes per token, or resident GPU bytes. Inspection
-returns those facts and three unresolved inputs without fetching the large
-SafeTensors index:
+and mixed MXFP4 layout. It is not enough to derive the logical parameter count
+or resident GPU bytes. Inspection returns those facts and two unresolved model
+inputs without fetching the large SafeTensors index:
 
 ```bash
 icc inspect-model \
@@ -334,16 +339,18 @@ icc plan-model \
 ```
 
 With config metadata alone, it returns `needs-model-inputs` for logical
-parameter count, measured per-device KV bytes/token, and measured resident
-weight bytes. It does not produce a provider ranking from guessed values.
+parameter count and measured resident weight bytes. It does not produce a
+provider ranking from guessed values.
 
-Supply `--parameter-count`, `--kv-bytes-per-token-per-device`, and
-`--resident-weight-bytes` from authoritative model and initialization evidence
-to create the manifest. Provider planning for a quantized manifest also needs
-an exact `weight_bytes_per_device_override` in each multi-device runtime
-option. A measured total on the manifest is sufficient only for a one-device
-layout. This prevents packed checkpoint size, nominal four-bit arithmetic, or
-even sharding from becoming an unsupported per-device GPU-memory claim.
+Supply `--parameter-count` and `--resident-weight-bytes` from authoritative
+model evidence to create the manifest. Provider planning for a quantized
+manifest also needs an exact `weight_bytes_per_device_override` in each
+multi-device runtime option. Hybrid Kimi runtimes additionally need a
+`kv_capacity_envelope_override` bound to the exact hardware ID and available KV
+memory. A measured total on the manifest is sufficient only for a one-device
+layout. This prevents packed checkpoint size, nominal four-bit arithmetic,
+sharding, or a linear KV approximation from becoming an unsupported GPU-memory
+claim.
 
 For an unquantized model whose config omits `num_parameters`, the online
 resolver uses the pinned model API's SafeTensors parameter total and records
@@ -376,12 +383,19 @@ icc import-vllm-benchmark \
   --source benchmark://serve-run
 ```
 
+See [capturing a vLLM initialization profile](docs/vllm-initialization.md) for
+the exact worker values and group-aware KV result to export. Use raw byte
+values; rounded GiB log lines are not exact enough for evidence binding.
+
 `materialize-recipe` is the evidence gate between configuration inspection and
 a complete serving recipe. It rejects a different model identity or revision,
 a configured context above the model limit, a mismatched host/runtime/topology,
 and an initialization KV capacity that does not reconcile with the measured
-memory ledger. The routing flag is mandatory because KV events alone do not
-identify the deployed routing policy.
+memory ledger. Initialization profile 2.0 records available KV bytes plus one
+or more `{context_tokens, max_sequences}` points. Hybrid, MLA, custom, and
+sub-byte layouts are valid only at those exact points; the library does not
+interpolate or extrapolate them. The routing flag is mandatory because KV
+events alone do not identify the deployed routing policy.
 
 See [the sanitized deployment-shaped cases](docs/case-studies.md) for what the
 draft audit can and cannot conclude.
@@ -492,10 +506,11 @@ than one, the caller or future runtime adapter must provide
 `kv_heads_per_device`, interpreted as the maximum resident on any one device.
 Across TP devices it must cover every logical KV head; replication is allowed.
 The library will not silently assume that KV heads are sharded or replicated.
-MLA, hybrid cache groups, unequal K/V dimensions,
-sub-byte KV formats, and custom attention require an explicit
-per-device KV-bytes/token override. The closed-form calculation is only for
-uniform full-attention K/V storage.
+The closed-form calculation is only for uniform full-attention K/V storage.
+MLA, hybrid cache groups, unequal K/V dimensions, sub-byte KV formats, and
+custom attention require exact context-capacity points from the runtime. Those
+points are tied to the hardware ID and available KV memory from the same
+initialization run. An unmeasured context is rejected rather than interpolated.
 
 Tensor-parallel weight layouts can contain replicated tensors or uneven shards.
 Without `weight_bytes_per_device_override`, the calculator divides the model's
@@ -540,7 +555,7 @@ never a cluster mutation.
 
 ## Schema compatibility
 
-Version `0.2.0` introduces the breaking `capacity-contract-2.0` schema:
+Version `0.2.0` introduced the historical `capacity-contract-2.0` schema:
 
 - removes scalar `max_concurrent_sequences`;
 - separates per-device KV bytes, blocks, and tokens;
@@ -548,9 +563,19 @@ Version `0.2.0` introduces the breaking `capacity-contract-2.0` schema:
 - treats one runtime variant as one tensor-parallel replica; and
 - moves replica/data-parallel count to scaling and future planning layers.
 
-The historical 1.0 schema remains in `schemas/` for reference. New documents
-must use `schemas/capacity-contract-2.0.schema.json` and scaling recommendations
-use `schemas/scaling-recommendation-2.0.schema.json`.
+Version `0.6.0` introduces `capacity-contract-3.0` and
+`vllm-initialization-profile-2.0`. Uniform attention retains the analytical
+linear calculation. Hybrid, MLA, custom, and sub-byte caches require exact
+runtime capacity points bound to the hardware identity and KV memory budget.
+Scalar KV capacity fields are `null` for those contracts.
+
+Historical schemas remain in `schemas/` for reference. New capacity documents
+must use `schemas/capacity-contract-3.0.schema.json`; scaling recommendations
+continue to use `schemas/scaling-recommendation-2.0.schema.json`.
+
+Installed wheels include the same files. Library consumers can use
+`available_schema_versions()` and `load_schema("capacity-contract-3.0")`
+without a repository checkout.
 
 Version `0.3.0` added these independent schemas without changing the 2.0
 capacity contract:

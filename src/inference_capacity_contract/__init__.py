@@ -41,7 +41,9 @@ from .models import (
     EvidenceRecord,
     HardwareInventory,
     HardwareSpec,
+    KVCapacityMode,
     ModelSpec,
+    RuntimeKVCapacityPoint,
     RuntimeVariant,
     ValidationLevel,
     WorkloadProfile,
@@ -68,6 +70,7 @@ from .recipe import (
     audit_recipe,
 )
 from .scaling import ScalingRecommendation, recommend_scale
+from .schema_catalog import available_schema_versions, load_schema
 from .workflows import ModelPlanningResult, ModelPlanningStatus, plan_huggingface_model
 
 __all__ = [
@@ -78,7 +81,9 @@ __all__ = [
     "EvidenceRecord",
     "HardwareInventory",
     "HardwareSpec",
+    "KVCapacityMode",
     "ModelSpec",
+    "RuntimeKVCapacityPoint",
     "RuntimeVariant",
     "ValidationLevel",
     "capacity_for",
@@ -88,6 +93,8 @@ __all__ = [
     "ScalingRecommendation",
     "WorkloadProfile",
     "recommend_scale",
+    "available_schema_versions",
+    "load_schema",
     "AuditStatus",
     "LLMDRoutingSpec",
     "LoadRequirement",

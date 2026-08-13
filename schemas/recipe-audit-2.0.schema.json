@@ -45,7 +45,7 @@
       "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/load-requirement-1.0.schema.json"
     },
     "rank_contract": {
-      "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json"
+      "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-3.0.schema.json"
     },
     "status": {"enum": ["sufficient", "insufficient", "incomplete", "invalid"]},
     "context_supported": {"type": "boolean"},
@@ -55,12 +55,15 @@
       "type": "object",
       "minProperties": 1,
       "propertyNames": {
-        "enum": ["memory", "runtime", "llmd_flow_control", "llmd_max_concurrency", "measured"]
+        "enum": [
+          "memory", "runtime_kv_envelope", "runtime", "llmd_flow_control",
+          "llmd_max_concurrency", "measured_profile"
+        ]
       },
       "additionalProperties": {"type": "integer", "minimum": 0}
     },
     "effective_sequences_per_group": {"type": "integer", "minimum": 0},
-    "calculated_kv_tokens_per_group": {"type": "integer", "minimum": 0},
+    "calculated_kv_tokens_per_group": {"type": ["integer", "null"], "minimum": 0},
     "calculated_max_concurrent_sequences": {"type": "integer", "minimum": 0},
     "configured_devices": {"type": "integer", "minimum": 1},
     "required_groups": {"type": ["integer", "null"], "minimum": 1},

@@ -490,7 +490,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(initialization_import.returncode, 0, initialization_import.stderr)
             self.assertEqual(
                 json.loads(initialization_import.stdout)["schema_version"],
-                "vllm-initialization-profile-1.0",
+                "vllm-initialization-profile-2.0",
             )
 
             config = directory_path / "config.json"
@@ -562,8 +562,6 @@ class CliTests(unittest.TestCase):
                     str(fixtures / "model-config-long-context-moe.json"),
                     "--safetensors-index",
                     str(fixtures / "model-safetensors-index-long-context-moe.json"),
-                    "--kv-bytes-per-token-per-device",
-                    "4096",
                     "--output",
                     str(manifest),
                 ],

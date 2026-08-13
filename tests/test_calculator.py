@@ -12,7 +12,9 @@ from inference_capacity_contract import (
     EvidenceRecord,
     HardwareInventory,
     HardwareSpec,
+    KVCapacityMode,
     ModelSpec,
+    RuntimeKVCapacityPoint,
     RuntimeVariant,
     ValidationLevel,
     WorkloadProfile,
@@ -59,7 +61,7 @@ class CalculatorTests(unittest.TestCase):
             runtime(),
         )
         self.assertTrue(contract.fits)
-        self.assertEqual(contract.schema_version, "capacity-contract-2.0")
+        self.assertEqual(contract.schema_version, "capacity-contract-3.0")
         self.assertEqual(
             contract.validation_level,
             ValidationLevel.ANALYTICALLY_FEASIBLE,
@@ -68,7 +70,10 @@ class CalculatorTests(unittest.TestCase):
             contract.kv_bytes_per_token_per_device,
             2 * 32 * 8 * 128 * 2,
         )
-        self.assertGreater(contract.kv_capacity_blocks_per_device, 0)
+        blocks = contract.kv_capacity_blocks_per_device
+        self.assertIsNotNone(blocks)
+        assert blocks is not None
+        self.assertGreater(blocks, 0)
         self.assertEqual(contract.max_context_tokens, 8192)
         self.assertEqual(contract.max_sequences_at(2048), 128)
         self.assertEqual(contract.max_sequences_at(8192), 55)
@@ -81,9 +86,11 @@ class CalculatorTests(unittest.TestCase):
             runtime(),
         )
         previous = None
+        capacity_blocks = contract.kv_capacity_blocks_per_device
+        assert capacity_blocks is not None
         for point in contract.concurrency_envelope:
             used_blocks = point.blocks_per_sequence * point.max_sequences
-            self.assertLessEqual(used_blocks, contract.kv_capacity_blocks_per_device)
+            self.assertLessEqual(used_blocks, capacity_blocks)
             if previous is not None:
                 self.assertLessEqual(point.max_sequences, previous)
             previous = point.max_sequences
@@ -138,12 +145,60 @@ class CalculatorTests(unittest.TestCase):
         self.assertFalse(contract.fits)
         self.assertEqual(contract.concurrency_envelope, ())
 
-    def test_custom_attention_requires_explicit_kv_formula(self) -> None:
+    def test_custom_attention_requires_context_bound_runtime_capacity(self) -> None:
         with self.assertRaises(ContractError):
             capacity_for(
                 model_7b(attention_type="mla"),
                 HardwareSpec("h100-80gb", "nvidia", 1, 80 * GIB),
                 runtime(),
+            )
+
+        hardware = HardwareSpec("h100-80gb", "nvidia", 1, 80 * GIB)
+        kv_memory = (80 * GIB * 9) // 10 - model_7b().weight_bytes - 3 * GIB
+        exact_runtime = runtime(
+            kv_capacity_hardware_id=hardware.hardware_id,
+            kv_capacity_memory_bytes_per_device=kv_memory,
+            kv_capacity_envelope_override=(
+                RuntimeKVCapacityPoint(2048, 64),
+                RuntimeKVCapacityPoint(8192, 12),
+            ),
+        )
+        contract = capacity_for(
+            model_7b(attention_type="hybrid"),
+            hardware,
+            exact_runtime,
+            context_points=(8192,),
+        )
+        self.assertEqual(contract.kv_capacity_mode, KVCapacityMode.CONTEXT_ENVELOPE)
+        self.assertIsNone(contract.kv_bytes_per_token_per_device)
+        self.assertEqual(contract.max_sequences_at(8192), 12)
+        self.assertEqual(contract.max_sequences_at(2048), 64)
+        with self.assertRaisesRegex(ContractError, "no exact point"):
+            capacity_for(
+                model_7b(attention_type="hybrid"),
+                hardware,
+                exact_runtime,
+                context_points=(4096,),
+            )
+        wrong_hardware = capacity_for(
+            model_7b(attention_type="hybrid"),
+            replace(hardware, hardware_id="other-h100"),
+            exact_runtime,
+        )
+        self.assertFalse(wrong_hardware.fits)
+        self.assertIn("different hardware ID", " ".join(wrong_hardware.warnings))
+        wrong_memory = capacity_for(
+            model_7b(attention_type="hybrid"),
+            hardware,
+            replace(exact_runtime, kv_capacity_memory_bytes_per_device=kv_memory + 1),
+        )
+        self.assertFalse(wrong_memory.fits)
+        self.assertIn("different KV memory budget", " ".join(wrong_memory.warnings))
+        with self.assertRaisesRegex(ContractError, "either a linear KV bytes/token override"):
+            capacity_for(
+                model_7b(attention_type="hybrid", kv_bytes_per_token_per_device_override=1),
+                hardware,
+                exact_runtime,
             )
 
     def test_reverse_fit_is_deterministic_and_puts_fits_first(self) -> None:
@@ -218,7 +273,7 @@ class CalculatorTests(unittest.TestCase):
         )
         planner = to_llmd_planner_payload(contract)
         scaling = to_scaling_policy_input(contract)
-        self.assertEqual(planner["schema_version"], "llmd-capacity-input-2.0")
+        self.assertEqual(planner["schema_version"], "llmd-capacity-input-3.0")
         self.assertIsNone(scaling["replica_count"])
         self.assertTrue(scaling["requires_observed_workload_profile"])
         self.assertIn("concurrency_envelope", scaling["per_replica_capacity"])

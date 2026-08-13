@@ -28,12 +28,14 @@ from inference_capacity_contract import (
     WorkloadProfile,
     audit_recipe,
     audit_recipe_draft,
+    available_schema_versions,
     capacity_for,
     explore,
     import_huggingface_manifest,
     import_llmd_values,
     import_vllm_initialization,
     inspect_huggingface_config,
+    load_schema,
     plan,
     plan_huggingface_model,
     recommend_scale,
@@ -59,7 +61,8 @@ def _read_fixture(name: str) -> dict[str, object]:
 
 class SchemaTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.capacity_schema = _read_schema("capacity-contract-2.0.schema.json")
+        self.capacity_schema = _read_schema("capacity-contract-3.0.schema.json")
+        self.legacy_capacity_schema = _read_schema("capacity-contract-2.0.schema.json")
         self.scaling_schema = _read_schema("scaling-recommendation-2.0.schema.json")
         self.recipe_schema = _read_schema("serving-recipe-1.0.schema.json")
         self.load_schema = _read_schema("load-requirement-1.0.schema.json")
@@ -68,7 +71,8 @@ class SchemaTests(unittest.TestCase):
         self.structural_audit_schema = _read_schema("structural-recipe-audit-1.0.schema.json")
         self.manifest_schema = _read_schema("model-manifest-1.0.schema.json")
         self.model_resolution_schema = _read_schema("model-resolution-draft-1.0.schema.json")
-        self.initialization_schema = _read_schema("vllm-initialization-profile-1.0.schema.json")
+        self.initialization_schema = _read_schema("vllm-initialization-profile-2.0.schema.json")
+        self.legacy_initialization_schema = _read_schema("vllm-initialization-profile-1.0.schema.json")
         self.provider_inventory_schema = _read_schema("provider-inventory-1.0.schema.json")
         self.runtime_inventory_schema = _read_schema("runtime-inventory-1.0.schema.json")
         self.measurement_inventory_schema = _read_schema("measurement-inventory-1.0.schema.json")
@@ -76,6 +80,7 @@ class SchemaTests(unittest.TestCase):
         self.plan_schema = _read_schema("capacity-plan-1.0.schema.json")
         self.model_planning_schema = _read_schema("model-planning-result-1.0.schema.json")
         Draft202012Validator.check_schema(self.capacity_schema)
+        Draft202012Validator.check_schema(self.legacy_capacity_schema)
         Draft202012Validator.check_schema(self.scaling_schema)
         Draft202012Validator.check_schema(self.recipe_schema)
         Draft202012Validator.check_schema(self.load_schema)
@@ -85,12 +90,20 @@ class SchemaTests(unittest.TestCase):
         Draft202012Validator.check_schema(self.manifest_schema)
         Draft202012Validator.check_schema(self.model_resolution_schema)
         Draft202012Validator.check_schema(self.initialization_schema)
+        Draft202012Validator.check_schema(self.legacy_initialization_schema)
         Draft202012Validator.check_schema(self.provider_inventory_schema)
         Draft202012Validator.check_schema(self.runtime_inventory_schema)
         Draft202012Validator.check_schema(self.measurement_inventory_schema)
         Draft202012Validator.check_schema(self.exploration_schema)
         Draft202012Validator.check_schema(self.plan_schema)
         Draft202012Validator.check_schema(self.model_planning_schema)
+
+    def test_packaged_schema_catalog(self) -> None:
+        versions = available_schema_versions()
+        self.assertIn("capacity-contract-3.0", versions)
+        self.assertEqual(load_schema("capacity-contract-3.0"), self.capacity_schema)
+        with self.assertRaisesRegex(ValueError, "unknown schema version"):
+            load_schema("../capacity-contract-3.0")
 
     def test_model_planning_result_document_validates(self) -> None:
         providers = ProviderInventory.from_dict(_read_fixture("provider-inventory.json"))
@@ -261,11 +274,14 @@ class SchemaTests(unittest.TestCase):
                 "memory_utilization_limit": 0.9,
                 "kv_cache_dtype": "bf16",
                 "block_size_tokens": 16,
+                "max_num_seqs": 128,
                 "weight_bytes_per_device": 2048,
                 "runtime_overhead_bytes_per_device": 0,
                 "activation_reserve_bytes_per_device": 0,
-                "kv_bytes_per_token_per_device": 512,
-                "kv_capacity_tokens_per_device": 1000,
+                "kv_capacity_memory_bytes_per_device": 72 * GIB - 2048,
+                "kv_capacity_envelope": [
+                    {"context_tokens": 1024, "max_sequences": 128},
+                ],
             },
             source="benchmark://schema-init",
         )
@@ -395,13 +411,14 @@ class SchemaTests(unittest.TestCase):
 
     def test_schema_rejects_empty_nested_contract_objects(self) -> None:
         invalid = {
-            "schema_version": "capacity-contract-2.0",
+            "schema_version": "capacity-contract-3.0",
             "model": {},
             "hardware": {},
             "runtime": {},
             "fits": True,
             "validation_level": "analytically-feasible",
             "memory_bytes_per_device": {},
+            "kv_capacity_mode": "linear",
             "kv_bytes_per_token_per_device": 1,
             "kv_block_size_tokens": 16,
             "kv_capacity_blocks_per_device": 0,

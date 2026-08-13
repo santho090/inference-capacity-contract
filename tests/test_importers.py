@@ -48,6 +48,7 @@ def _init_identity(**changes: object) -> dict[str, object]:
         "memory_utilization_limit": 0.9,
         "kv_cache_dtype": "bf16",
         "block_size_tokens": 16,
+        "max_num_seqs": 128,
     }
     values.update(changes)
     return values
@@ -181,7 +182,6 @@ class ModelManifestImporterTests(unittest.TestCase):
             {item.path for item in draft.unresolved},
             {
                 "parameter_count_override",
-                "kv_bytes_per_token_per_device_override",
                 "resident_weight_bytes_override",
             },
         )
@@ -316,16 +316,16 @@ class ModelManifestImporterTests(unittest.TestCase):
             )
 
     def test_partial_hybrid_config_uses_explicit_facts_and_caller_weight_format(self) -> None:
+        config = {
+            "head_dim": 64,
+            "max_position_embeddings": 4096,
+            "linear_attn_config": {"head_dim": 32},
+            "num_parameters": 1000,
+        }
         draft = inspect_huggingface_config(
             "example/partial-hybrid",
             PINNED_REVISION,
-            {
-                "head_dim": 64,
-                "max_position_embeddings": 4096,
-                "linear_attn_config": {"head_dim": 32},
-                "num_parameters": 1000,
-            },
-            kv_bytes_per_token_per_device_override=128,
+            config,
             resident_weight_bytes_override=800,
             weight_dtype_override="vendor_packed",
         )
@@ -337,6 +337,15 @@ class ModelManifestImporterTests(unittest.TestCase):
             {item.path for item in draft.unresolved},
             {"model.num_layers", "model.num_kv_heads"},
         )
+        with self.assertRaisesRegex(ContractError, "exact runtime initialization profile"):
+            inspect_huggingface_config(
+                "example/partial-hybrid",
+                PINNED_REVISION,
+                config,
+                kv_bytes_per_token_per_device_override=128,
+                resident_weight_bytes_override=800,
+                weight_dtype_override="vendor_packed",
+            )
 
         linear_head = inspect_huggingface_config(
             "example/linear-head",
@@ -347,7 +356,6 @@ class ModelManifestImporterTests(unittest.TestCase):
                 "num_parameters": 1000,
                 "torch_dtype": "float16",
             },
-            kv_bytes_per_token_per_device_override=128,
         )
         self.assertEqual(linear_head.facts["head_dim"], 32)
         self.assertEqual(linear_head.field_sources["head_dim"], "config.linear_attn_config.head_dim")
@@ -404,7 +412,7 @@ class ModelManifestImporterTests(unittest.TestCase):
         self.assertEqual(manifest.model.weight_dtype, "bf16")
         self.assertEqual(manifest.field_sources["artifact_bytes"], "safetensors-index.metadata.total_size")
 
-    def test_rejects_floating_revision_and_custom_attention_without_override(self) -> None:
+    def test_rejects_floating_revision_and_keeps_custom_capacity_out_of_manifest(self) -> None:
         config = {
             "architectures": ["CustomMLAForCausalLM"],
             "num_hidden_layers": 2,
@@ -419,8 +427,9 @@ class ModelManifestImporterTests(unittest.TestCase):
         index = {"metadata": {"total_size": 1024}}
         with self.assertRaisesRegex(ContractError, "immutable 40-character"):
             import_huggingface_manifest("example/custom", "main", config, index)
-        with self.assertRaisesRegex(ContractError, "kv_bytes_per_token_per_device_override"):
-            import_huggingface_manifest("example/custom", PINNED_REVISION, config, index)
+        manifest = import_huggingface_manifest("example/custom", PINNED_REVISION, config, index)
+        self.assertEqual(manifest.model.attention_type, "mla")
+        self.assertIsNone(manifest.model.kv_bytes_per_token_per_device_override)
 
     def test_cache_round_trip_is_offline(self) -> None:
         manifest = import_huggingface_manifest(
@@ -534,7 +543,6 @@ class ModelManifestImporterTests(unittest.TestCase):
             config,
             {"metadata": {"total_size": 1_560_860_324_864}},
             parameter_count_override=2_800_000_000_000,
-            kv_bytes_per_token_per_device_override=4096,
             resident_weight_bytes_override=1_560_860_324_864,
         )
 
@@ -597,7 +605,7 @@ class ModelManifestImporterTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             ContractError,
-            "parameter_count_override.*kv_bytes_per_token.*resident_weight_bytes_override",
+            "parameter_count_override.*resident_weight_bytes_override",
         ):
             resolve_huggingface_manifest(
                 "moonshotai/Kimi-K3",
@@ -846,8 +854,10 @@ class VLLMImporterTests(unittest.TestCase):
                 "weight_bytes_per_device": 60 * GIB,
                 "runtime_overhead_bytes_per_device": 2 * GIB,
                 "activation_reserve_bytes_per_device": 4 * GIB,
-                "kv_bytes_per_token_per_device": 4096,
-                "kv_capacity_tokens_per_device": 3_000_000,
+                "kv_capacity_memory_bytes_per_device": 6 * GIB,
+                "kv_capacity_envelope": [
+                    {"context_tokens": 8192, "max_sequences": 32},
+                ],
             },
             source="benchmark://init-001",
         )
@@ -858,6 +868,53 @@ class VLLMImporterTests(unittest.TestCase):
         tampered["evidence"]["metrics"]["weight_bytes_per_device"] = 1
         with self.assertRaisesRegex(ContractError, "bind its exact identity"):
             type(profile).from_dict(tampered)
+        tampered_envelope = profile.to_dict()
+        tampered_envelope["kv_capacity_envelope"][0]["max_sequences"] = 31
+        with self.assertRaisesRegex(ContractError, "bind its exact identity"):
+            type(profile).from_dict(tampered_envelope)
+
+    def test_initialization_rejects_invalid_capacity_envelopes(self) -> None:
+        base = {
+            **_init_identity(),
+            "model_revision": PINNED_REVISION,
+            "weight_bytes_per_device": 60 * GIB,
+            "runtime_overhead_bytes_per_device": 2 * GIB,
+            "activation_reserve_bytes_per_device": 4 * GIB,
+            "kv_capacity_memory_bytes_per_device": 6 * GIB,
+        }
+        for envelope, message in (
+            ([], "cannot be empty"),
+            ([{"context_tokens": 8192, "max_sequences": 129}], "cannot exceed"),
+            (
+                [
+                    {"context_tokens": 8192, "max_sequences": 32},
+                    {"context_tokens": 4096, "max_sequences": 16},
+                ],
+                "strictly increasing",
+            ),
+            (
+                [
+                    {"context_tokens": 4096, "max_sequences": 16},
+                    {"context_tokens": 8192, "max_sequences": 32},
+                ],
+                "cannot increase",
+            ),
+        ):
+            with self.subTest(envelope=envelope), self.assertRaisesRegex(ContractError, message):
+                import_vllm_initialization(
+                    {**base, "kv_capacity_envelope": envelope},
+                    source="benchmark://invalid-init",
+                )
+        with self.assertRaisesRegex(ContractError, "must be an array"):
+            import_vllm_initialization(
+                {**base, "kv_capacity_envelope": {}},
+                source="benchmark://invalid-init",
+            )
+        with self.assertRaisesRegex(ContractError, "must contain objects"):
+            import_vllm_initialization(
+                {**base, "kv_capacity_envelope": [1]},
+                source="benchmark://invalid-init",
+            )
 
     def test_imports_benchmark_as_one_exact_operating_point(self) -> None:
         recipe = _recipe()
@@ -974,8 +1031,10 @@ class VLLMImporterTests(unittest.TestCase):
                 "weight_bytes_per_device": 2048,
                 "runtime_overhead_bytes_per_device": 0,
                 "activation_reserve_bytes_per_device": 0,
-                "kv_bytes_per_token_per_device": 512,
-                "kv_capacity_tokens_per_device": ((72 * GIB - 2048) // (512 * 16)) * 16,
+                "kv_capacity_memory_bytes_per_device": 72 * GIB - 2048,
+                "kv_capacity_envelope": [
+                    {"context_tokens": 8192, "max_sequences": 128},
+                ],
             },
             source="benchmark://init",
         )
@@ -999,8 +1058,10 @@ class VLLMImporterTests(unittest.TestCase):
                 "weight_bytes_per_device": 2048,
                 "runtime_overhead_bytes_per_device": 0,
                 "activation_reserve_bytes_per_device": 0,
-                "kv_bytes_per_token_per_device": 512,
-                "kv_capacity_tokens_per_device": ((72 * GIB - 2048) // (512 * 16)) * 16,
+                "kv_capacity_memory_bytes_per_device": 72 * GIB - 2048,
+                "kv_capacity_envelope": [
+                    {"context_tokens": 8192, "max_sequences": 128},
+                ],
             },
             source="benchmark://init",
         )
@@ -1013,8 +1074,10 @@ class VLLMImporterTests(unittest.TestCase):
                 "weight_bytes_per_device": 2048,
                 "runtime_overhead_bytes_per_device": 0,
                 "activation_reserve_bytes_per_device": 0,
-                "kv_bytes_per_token_per_device": 512,
-                "kv_capacity_tokens_per_device": ((72 * GIB - 2048) // (512 * 16)) * 16,
+                "kv_capacity_memory_bytes_per_device": 72 * GIB - 2048,
+                "kv_capacity_envelope": [
+                    {"context_tokens": 8192, "max_sequences": 128},
+                ],
             },
             source="benchmark://init",
         )
@@ -1028,12 +1091,14 @@ class VLLMImporterTests(unittest.TestCase):
                 "weight_bytes_per_device": 2048,
                 "runtime_overhead_bytes_per_device": 0,
                 "activation_reserve_bytes_per_device": 0,
-                "kv_bytes_per_token_per_device": 512,
-                "kv_capacity_tokens_per_device": 1,
+                "kv_capacity_memory_bytes_per_device": 1,
+                "kv_capacity_envelope": [
+                    {"context_tokens": 8192, "max_sequences": 128},
+                ],
             },
             source="benchmark://init",
         )
-        with self.assertRaisesRegex(ContractError, "does not reconcile"):
+        with self.assertRaisesRegex(ContractError, "does not match"):
             materialize_recipe_draft(draft, manifest, inconsistent_capacity, precise_prefix_routing=True)
 
 

@@ -29,6 +29,11 @@ class EvidenceKind(StrEnum):
     EXTRAPOLATED = "extrapolated"
 
 
+class KVCapacityMode(StrEnum):
+    LINEAR = "linear"
+    CONTEXT_ENVELOPE = "context-envelope"
+
+
 DTYPE_BITS: dict[str, int] = {
     "bf16": 16,
     "fp16": 16,
@@ -254,6 +259,28 @@ class HardwareSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeKVCapacityPoint:
+    """Runtime-observed sequence capacity at one active-token length."""
+
+    context_tokens: int
+    max_sequences: int
+
+    def __post_init__(self) -> None:
+        _positive("context_tokens", _required_int("context_tokens", self.context_tokens))
+        _positive("max_sequences", _required_int("max_sequences", self.max_sequences))
+
+    def to_dict(self) -> dict[str, int]:
+        return {"context_tokens": self.context_tokens, "max_sequences": self.max_sequences}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> RuntimeKVCapacityPoint:
+        return cls(
+            _required_int("context_tokens", _required_field(data, "context_tokens")),
+            _required_int("max_sequences", _required_field(data, "max_sequences")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeVariant:
     """Pinned runtime configuration for one tensor-parallel serving replica.
 
@@ -272,6 +299,9 @@ class RuntimeVariant:
     activation_reserve_bytes_per_device: int = 0
     max_num_seqs: int | None = None
     block_size_tokens: int = 16
+    kv_capacity_hardware_id: str | None = None
+    kv_capacity_memory_bytes_per_device: int | None = None
+    kv_capacity_envelope_override: tuple[RuntimeKVCapacityPoint, ...] = ()
     supported_vendors: tuple[str, ...] = ("nvidia",)
     notes: tuple[str, ...] = ()
 
@@ -298,6 +328,38 @@ class RuntimeVariant:
                 raise ContractError(f"{name} cannot be negative")
         if self.max_num_seqs is not None:
             _positive("max_num_seqs", _required_int("max_num_seqs", self.max_num_seqs))
+        if self.kv_capacity_hardware_id is not None:
+            _required_str("kv_capacity_hardware_id", self.kv_capacity_hardware_id)
+            if not self.kv_capacity_hardware_id:
+                raise ContractError("kv_capacity_hardware_id cannot be empty")
+        if self.kv_capacity_memory_bytes_per_device is not None:
+            _positive(
+                "kv_capacity_memory_bytes_per_device",
+                _required_int(
+                    "kv_capacity_memory_bytes_per_device",
+                    self.kv_capacity_memory_bytes_per_device,
+                ),
+            )
+        envelope = tuple(self.kv_capacity_envelope_override)
+        if any(not isinstance(point, RuntimeKVCapacityPoint) for point in envelope):
+            raise ContractError("kv_capacity_envelope_override must contain runtime KV capacity points")
+        if envelope:
+            if self.kv_capacity_hardware_id is None or self.kv_capacity_memory_bytes_per_device is None:
+                raise ContractError("a runtime KV capacity envelope requires its hardware ID and KV memory bytes")
+            previous_context = 0
+            previous_sequences: int | None = None
+            for point in envelope:
+                if point.context_tokens <= previous_context:
+                    raise ContractError("runtime KV capacity contexts must be strictly increasing")
+                if previous_sequences is not None and point.max_sequences > previous_sequences:
+                    raise ContractError("runtime KV sequence capacity cannot increase with context")
+                if self.max_num_seqs is not None and point.max_sequences > self.max_num_seqs:
+                    raise ContractError("runtime KV capacity cannot exceed max_num_seqs")
+                previous_context = point.context_tokens
+                previous_sequences = point.max_sequences
+        elif self.kv_capacity_hardware_id is not None or self.kv_capacity_memory_bytes_per_device is not None:
+            raise ContractError("runtime KV capacity hardware and memory require an envelope")
+        object.__setattr__(self, "kv_capacity_envelope_override", envelope)
         if self.kv_cache_dtype not in DTYPE_BITS:
             raise ContractError(f"unsupported kv_cache_dtype {self.kv_cache_dtype!r}")
         if not self.supported_vendors or any(not isinstance(item, str) or not item for item in self.supported_vendors):
@@ -321,6 +383,9 @@ class RuntimeVariant:
             "activation_reserve_bytes_per_device": self.activation_reserve_bytes_per_device,
             "max_num_seqs": self.max_num_seqs,
             "block_size_tokens": self.block_size_tokens,
+            "kv_capacity_hardware_id": self.kv_capacity_hardware_id,
+            "kv_capacity_memory_bytes_per_device": self.kv_capacity_memory_bytes_per_device,
+            "kv_capacity_envelope_override": [point.to_dict() for point in self.kv_capacity_envelope_override],
             "supported_vendors": list(self.supported_vendors),
             "notes": list(self.notes),
         }
@@ -335,6 +400,10 @@ class RuntimeVariant:
             )
         raw_supported_vendors = _required_sequence("supported_vendors", data.get("supported_vendors", ("nvidia",)))
         raw_notes = _required_sequence("notes", data.get("notes", ()))
+        raw_kv_envelope = _required_sequence(
+            "kv_capacity_envelope_override",
+            data.get("kv_capacity_envelope_override", ()),
+        )
         return cls(
             engine=_required_str("engine", _required_field(data, "engine")),
             version=_required_str("version", _required_field(data, "version")),
@@ -352,6 +421,18 @@ class RuntimeVariant:
             ),
             max_num_seqs=_optional_int("max_num_seqs", data.get("max_num_seqs")),
             block_size_tokens=_required_int("block_size_tokens", data.get("block_size_tokens", 16)),
+            kv_capacity_hardware_id=_optional_str(
+                "kv_capacity_hardware_id",
+                data.get("kv_capacity_hardware_id"),
+            ),
+            kv_capacity_memory_bytes_per_device=_optional_int(
+                "kv_capacity_memory_bytes_per_device",
+                data.get("kv_capacity_memory_bytes_per_device"),
+            ),
+            kv_capacity_envelope_override=tuple(
+                RuntimeKVCapacityPoint.from_dict(_required_mapping("runtime KV capacity point", point))
+                for point in raw_kv_envelope
+            ),
             supported_vendors=tuple(_required_str("supported_vendors item", item) for item in raw_supported_vendors),
             notes=tuple(_required_str("notes item", item) for item in raw_notes),
         )
@@ -620,6 +701,23 @@ class ConcurrencyPoint:
         )
 
 
+def _expected_kv_bytes_per_token(model: ModelSpec, runtime: RuntimeVariant) -> int:
+    if model.attention_type in {"mla", "hybrid", "custom"} or DTYPE_BITS[runtime.kv_cache_dtype] < 8:
+        raise ContractError("this KV layout requires a context-bound runtime KV capacity envelope")
+    override = model.kv_bytes_per_token_per_device_override
+    if override is not None:
+        return override
+    kv_heads_per_device = model.num_kv_heads if runtime.tensor_parallel_size == 1 else runtime.kv_heads_per_device
+    if kv_heads_per_device is None:
+        raise ContractError("tensor-parallel contracts require kv_heads_per_device")
+    if kv_heads_per_device > model.num_kv_heads:
+        raise ContractError("kv_heads_per_device cannot exceed model num_kv_heads")
+    if runtime.tensor_parallel_size * kv_heads_per_device < model.num_kv_heads:
+        raise ContractError("kv_heads_per_device under-represents the model KV layout")
+    kv_elements = 2 * model.num_layers * kv_heads_per_device * model.head_dim
+    return ceil_div(kv_elements * DTYPE_BITS[runtime.kv_cache_dtype], 8)
+
+
 @dataclass(frozen=True, slots=True)
 class CapacityContract:
     """A descriptive, versioned capacity result; never an actuation command."""
@@ -631,10 +729,11 @@ class CapacityContract:
     fits: bool
     validation_level: ValidationLevel
     memory_bytes_per_device: Mapping[str, int]
-    kv_bytes_per_token_per_device: int
+    kv_capacity_mode: KVCapacityMode
+    kv_bytes_per_token_per_device: int | None
     kv_block_size_tokens: int
-    kv_capacity_blocks_per_device: int
-    kv_capacity_tokens_per_device: int
+    kv_capacity_blocks_per_device: int | None
+    kv_capacity_tokens_per_device: int | None
     max_context_tokens: int
     concurrency_envelope: tuple[ConcurrencyPoint, ...]
     assumptions: tuple[str, ...] = ()
@@ -642,13 +741,18 @@ class CapacityContract:
     evidence: tuple[EvidenceRecord, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.schema_version != "capacity-contract-2.0":
-            raise ContractError(f"unsupported schema_version {self.schema_version!r}; expected 'capacity-contract-2.0'")
+        if self.schema_version != "capacity-contract-3.0":
+            raise ContractError(f"unsupported schema_version {self.schema_version!r}; expected 'capacity-contract-3.0'")
         try:
             normalized_level = ValidationLevel(self.validation_level)
         except (TypeError, ValueError) as exc:
             raise ContractError(f"unsupported validation_level {self.validation_level!r}") from exc
         object.__setattr__(self, "validation_level", normalized_level)
+        try:
+            capacity_mode = KVCapacityMode(self.kv_capacity_mode)
+        except (TypeError, ValueError) as exc:
+            raise ContractError(f"unsupported kv_capacity_mode {self.kv_capacity_mode!r}") from exc
+        object.__setattr__(self, "kv_capacity_mode", capacity_mode)
         _required_bool("fits", self.fits)
 
         expected_memory_keys = {
@@ -691,71 +795,67 @@ class CapacityContract:
         if dict(self.memory_bytes_per_device) != expected_memory:
             raise ContractError("memory_bytes_per_device is inconsistent with model, hardware, and runtime inputs")
 
-        override = self.model.kv_bytes_per_token_per_device_override
-        if override is not None:
-            expected_kv_bytes_per_token = override
-        else:
-            if self.model.attention_type in {"mla", "hybrid", "custom"} or DTYPE_BITS[self.runtime.kv_cache_dtype] < 8:
-                raise ContractError("this KV layout requires kv_bytes_per_token_per_device_override")
-            kv_heads_per_device = (
-                self.model.num_kv_heads if self.runtime.tensor_parallel_size == 1 else self.runtime.kv_heads_per_device
-            )
-            if kv_heads_per_device is None:
-                raise ContractError("tensor-parallel contracts require kv_heads_per_device")
-            if kv_heads_per_device > self.model.num_kv_heads:
-                raise ContractError("kv_heads_per_device cannot exceed model num_kv_heads")
-            if self.runtime.tensor_parallel_size * kv_heads_per_device < self.model.num_kv_heads:
-                raise ContractError("kv_heads_per_device under-represents the model KV layout")
-            kv_elements = 2 * self.model.num_layers * kv_heads_per_device * self.model.head_dim
-            expected_kv_bytes_per_token = ceil_div(
-                kv_elements * DTYPE_BITS[self.runtime.kv_cache_dtype],
-                8,
-            )
-        _positive(
-            "kv_bytes_per_token_per_device",
-            _required_int("kv_bytes_per_token_per_device", self.kv_bytes_per_token_per_device),
-        )
-        if self.kv_bytes_per_token_per_device != expected_kv_bytes_per_token:
-            raise ContractError("kv_bytes_per_token_per_device is inconsistent with model and runtime inputs")
         _positive(
             "kv_block_size_tokens",
             _required_int("kv_block_size_tokens", self.kv_block_size_tokens),
         )
-        _required_int("kv_capacity_blocks_per_device", self.kv_capacity_blocks_per_device)
-        _required_int("kv_capacity_tokens_per_device", self.kv_capacity_tokens_per_device)
         _required_int("max_context_tokens", self.max_context_tokens)
-        if self.kv_capacity_blocks_per_device < 0 or self.kv_capacity_tokens_per_device < 0:
-            raise ContractError("KV capacity cannot be negative")
         if self.max_context_tokens < 0:
             raise ContractError("max_context_tokens cannot be negative")
-        if self.kv_capacity_tokens_per_device != (self.kv_capacity_blocks_per_device * self.kv_block_size_tokens):
-            raise ContractError("KV token capacity must equal block capacity times block size")
-        expected_blocks = expected_memory["kv_available"] // (
-            self.kv_bytes_per_token_per_device * self.kv_block_size_tokens
-        )
-        if self.kv_capacity_blocks_per_device != expected_blocks:
-            raise ContractError("KV block capacity is inconsistent with the per-device memory ledger")
 
         vendor_supported = self.hardware.vendor.lower() in {vendor.lower() for vendor in self.runtime.supported_vendors}
         topology_supported = self.hardware.device_count == self.runtime.tensor_parallel_size
-        expected_fits = (
-            vendor_supported
-            and topology_supported
-            and raw_kv_available >= self.kv_bytes_per_token_per_device * self.kv_block_size_tokens
-        )
+        if capacity_mode == KVCapacityMode.LINEAR:
+            expected_kv_bytes_per_token = _expected_kv_bytes_per_token(self.model, self.runtime)
+            _positive(
+                "kv_bytes_per_token_per_device",
+                _required_int("kv_bytes_per_token_per_device", self.kv_bytes_per_token_per_device),
+            )
+            if self.kv_bytes_per_token_per_device != expected_kv_bytes_per_token:
+                raise ContractError("kv_bytes_per_token_per_device is inconsistent with model and runtime inputs")
+            expected_blocks = expected_memory["kv_available"] // (
+                expected_kv_bytes_per_token * self.kv_block_size_tokens
+            )
+            if self.kv_capacity_blocks_per_device != expected_blocks:
+                raise ContractError("KV block capacity is inconsistent with the per-device memory ledger")
+            expected_tokens = expected_blocks * self.kv_block_size_tokens
+            if self.kv_capacity_tokens_per_device != expected_tokens:
+                raise ContractError("KV token capacity must equal block capacity times block size")
+            expected_fits = vendor_supported and topology_supported and expected_blocks > 0
+            expected_max_context = 0 if not expected_fits else expected_tokens
+            if expected_fits and self.model.max_model_len is not None:
+                expected_max_context = min(expected_max_context, self.model.max_model_len)
+        else:
+            if self.kv_bytes_per_token_per_device is not None:
+                raise ContractError("context-envelope KV capacity cannot claim linear bytes per token")
+            if self.kv_capacity_blocks_per_device is not None or self.kv_capacity_tokens_per_device is not None:
+                raise ContractError("context-envelope KV capacity cannot claim a scalar block or token capacity")
+            runtime_points = self.runtime.kv_capacity_envelope_override
+            if not runtime_points:
+                raise ContractError("context-envelope KV capacity requires runtime capacity points")
+            exact_hardware = self.runtime.kv_capacity_hardware_id == self.hardware.hardware_id
+            exact_memory = self.runtime.kv_capacity_memory_bytes_per_device == expected_memory["kv_available"]
+            expected_fits = vendor_supported and topology_supported and exact_hardware and exact_memory
+            expected_max_context = 0
+            if expected_fits:
+                supported_contexts = tuple(
+                    point.context_tokens
+                    for point in runtime_points
+                    if self.model.max_model_len is None or point.context_tokens <= self.model.max_model_len
+                )
+                expected_fits = bool(supported_contexts)
+                if supported_contexts:
+                    expected_max_context = max(supported_contexts)
         if self.fits != expected_fits:
             raise ContractError("fits is inconsistent with vendor, topology, and memory feasibility")
-
-        expected_max_context = 0
-        if expected_fits:
-            expected_max_context = self.kv_capacity_tokens_per_device
-            if self.model.max_model_len is not None:
-                expected_max_context = min(expected_max_context, self.model.max_model_len)
         if self.max_context_tokens != expected_max_context:
             raise ContractError("max_context_tokens is inconsistent with KV capacity and model limits")
-        if self.max_context_tokens > self.kv_capacity_tokens_per_device:
+        if (
+            self.kv_capacity_tokens_per_device is not None
+            and self.max_context_tokens > self.kv_capacity_tokens_per_device
+        ):
             raise ContractError("max_context_tokens cannot exceed per-device KV token capacity")
-        if self.fits and (self.kv_capacity_blocks_per_device == 0 or self.max_context_tokens == 0):
+        if self.fits and self.max_context_tokens == 0:
             raise ContractError("a fitting contract must have positive KV and context capacity")
         if self.fits and not self.concurrency_envelope:
             raise ContractError("a fitting contract must include a concurrency envelope")
@@ -768,12 +868,27 @@ class CapacityContract:
                 raise ContractError("concurrency_envelope context points must be strictly increasing")
             if point.context_tokens > self.max_context_tokens:
                 raise ContractError("concurrency_envelope cannot exceed max_context_tokens")
-            expected_point_blocks, expected_sequences = sequence_capacity(
-                self.kv_capacity_blocks_per_device,
-                self.kv_block_size_tokens,
-                point.context_tokens,
-                self.runtime.max_num_seqs,
-            )
+            expected_point_blocks = ceil_div(point.context_tokens, self.kv_block_size_tokens)
+            if capacity_mode == KVCapacityMode.LINEAR:
+                assert self.kv_capacity_blocks_per_device is not None
+                _, expected_sequences = sequence_capacity(
+                    self.kv_capacity_blocks_per_device,
+                    self.kv_block_size_tokens,
+                    point.context_tokens,
+                    self.runtime.max_num_seqs,
+                )
+            else:
+                runtime_point = next(
+                    (
+                        item
+                        for item in self.runtime.kv_capacity_envelope_override
+                        if item.context_tokens == point.context_tokens
+                    ),
+                    None,
+                )
+                if runtime_point is None:
+                    raise ContractError("concurrency_envelope contains an unmeasured runtime context")
+                expected_sequences = runtime_point.max_sequences
             if point.blocks_per_sequence != expected_point_blocks:
                 raise ContractError("concurrency_envelope blocks_per_sequence is inconsistent with block size")
             if point.max_sequences != expected_sequences:
@@ -796,6 +911,12 @@ class CapacityContract:
         _positive("context_tokens", context_tokens)
         if not self.fits or context_tokens > self.max_context_tokens:
             return 0
+        if self.kv_capacity_mode == KVCapacityMode.CONTEXT_ENVELOPE:
+            for point in self.runtime.kv_capacity_envelope_override:
+                if point.context_tokens == context_tokens:
+                    return point.max_sequences
+            raise ContractError("runtime KV capacity is not available at the requested context")
+        assert self.kv_capacity_blocks_per_device is not None
         _, sequences = sequence_capacity(
             self.kv_capacity_blocks_per_device,
             self.kv_block_size_tokens,
@@ -813,6 +934,7 @@ class CapacityContract:
             "fits": self.fits,
             "validation_level": self.validation_level.value,
             "memory_bytes_per_device": dict(self.memory_bytes_per_device),
+            "kv_capacity_mode": self.kv_capacity_mode.value,
             "kv_bytes_per_token_per_device": self.kv_bytes_per_token_per_device,
             "kv_block_size_tokens": self.kv_block_size_tokens,
             "kv_capacity_blocks_per_device": self.kv_capacity_blocks_per_device,
@@ -834,8 +956,8 @@ class CapacityContract:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> CapacityContract:
         schema_version = _required_str("schema_version", _required_field(data, "schema_version"))
-        if schema_version != "capacity-contract-2.0":
-            raise ContractError(f"unsupported schema_version {schema_version!r}; expected 'capacity-contract-2.0'")
+        if schema_version != "capacity-contract-3.0":
+            raise ContractError(f"unsupported schema_version {schema_version!r}; expected 'capacity-contract-3.0'")
         raw_memory = _required_mapping("memory_bytes_per_device", _required_field(data, "memory_bytes_per_device"))
         raw_envelope = _required_sequence("concurrency_envelope", _required_field(data, "concurrency_envelope"))
         raw_assumptions = _required_sequence("assumptions", data.get("assumptions", ()))
@@ -854,18 +976,18 @@ class CapacityContract:
                 _required_str("memory ledger key", key): _required_int("memory ledger value", value)
                 for key, value in raw_memory.items()
             },
-            kv_bytes_per_token_per_device=_required_int(
-                "kv_bytes_per_token_per_device",
-                _required_field(data, "kv_bytes_per_token_per_device"),
+            kv_capacity_mode=KVCapacityMode(
+                _required_str("kv_capacity_mode", _required_field(data, "kv_capacity_mode"))
+            ),
+            kv_bytes_per_token_per_device=_optional_int(
+                "kv_bytes_per_token_per_device", data.get("kv_bytes_per_token_per_device")
             ),
             kv_block_size_tokens=_required_int("kv_block_size_tokens", _required_field(data, "kv_block_size_tokens")),
-            kv_capacity_blocks_per_device=_required_int(
-                "kv_capacity_blocks_per_device",
-                _required_field(data, "kv_capacity_blocks_per_device"),
+            kv_capacity_blocks_per_device=_optional_int(
+                "kv_capacity_blocks_per_device", data.get("kv_capacity_blocks_per_device")
             ),
-            kv_capacity_tokens_per_device=_required_int(
-                "kv_capacity_tokens_per_device",
-                _required_field(data, "kv_capacity_tokens_per_device"),
+            kv_capacity_tokens_per_device=_optional_int(
+                "kv_capacity_tokens_per_device", data.get("kv_capacity_tokens_per_device")
             ),
             max_context_tokens=_required_int("max_context_tokens", _required_field(data, "max_context_tokens")),
             concurrency_envelope=tuple(

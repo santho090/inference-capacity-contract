@@ -16,6 +16,7 @@ from inference_capacity_contract import (
     MeasuredGroupProfile,
     ModelSpec,
     ParallelTopology,
+    RuntimeKVCapacityPoint,
     RuntimeVariant,
     ServingRecipe,
     audit_recipe,
@@ -49,7 +50,7 @@ def _model(**changes: object) -> ModelSpec:
         "max_model_len": 1_048_576,
         "explicit_weight_bytes": 1_280 * GIB,
         "attention_type": "custom",
-        "kv_bytes_per_token_per_device_override": 1024,
+        "kv_bytes_per_token_per_device_override": None,
     }
     values.update(changes)
     return ModelSpec(**values)  # type: ignore[arg-type]
@@ -80,6 +81,28 @@ def _runtime(**changes: object) -> RuntimeVariant:
         "block_size_tokens": 256,
     }
     values.update(changes)
+    if "kv_capacity_hardware_id" not in changes:
+        values["kv_capacity_hardware_id"] = "example-accelerator-x8"
+    if "kv_capacity_memory_bytes_per_device" not in changes:
+        usable = (288 * GIB * 96) // 100
+        weight_value = values["weight_bytes_per_device_override"]
+        weights = weight_value if isinstance(weight_value, int) else 0
+        runtime_value = values["runtime_overhead_bytes_per_device"]
+        activation_value = values["activation_reserve_bytes_per_device"]
+        assert isinstance(runtime_value, int) and isinstance(activation_value, int)
+        runtime_reserve = runtime_value
+        activation_reserve = activation_value
+        values["kv_capacity_memory_bytes_per_device"] = max(
+            1,
+            usable - weights - runtime_reserve - activation_reserve,
+        )
+    if "kv_capacity_envelope_override" not in changes:
+        values["kv_capacity_envelope_override"] = (
+            RuntimeKVCapacityPoint(1024, 24),
+            RuntimeKVCapacityPoint(65_536, 24),
+            RuntimeKVCapacityPoint(262_144, 24),
+            RuntimeKVCapacityPoint(1_048_576, 24),
+        )
     return RuntimeVariant(**values)  # type: ignore[arg-type]
 
 
@@ -198,11 +221,12 @@ class RecipeAuditTests(unittest.TestCase):
         )
         recipe = _tp_recipe(
             recipe_id="sanitized-sparse-dp8-ep8",
-            model=_model(max_model_len=262_144, kv_bytes_per_token_per_device_override=2048),
+            model=_model(max_model_len=262_144),
             runtime=_runtime(
                 tensor_parallel_size=1,
                 weight_bytes_per_device_override=200 * GIB,
                 max_num_seqs=128,
+                kv_capacity_envelope_override=(RuntimeKVCapacityPoint(262_144, 120),),
             ),
             topology=topology,
             llmd=LLMDRoutingSpec(
@@ -242,7 +266,7 @@ class RecipeAuditTests(unittest.TestCase):
         self.assertEqual(
             result.sequence_capacity_limits,
             {
-                "memory": 100,
+                "runtime_kv_envelope": 24,
                 "runtime": 24,
                 "llmd_flow_control": 2,
                 "llmd_max_concurrency": 24,
@@ -314,7 +338,7 @@ class RecipeAuditTests(unittest.TestCase):
         result = audit_recipe(recipe, _load(context_tokens=1024, peak_concurrent_sequences=1))
         self.assertEqual(result.status, AuditStatus.INVALID)
         self.assertIn("llm-d and vLLM block sizes do not match", result.issues)
-        self.assertIn("llm-d flow-control token limit exceeds calculated KV capacity", result.issues)
+        self.assertIsNone(result.calculated_kv_tokens_per_group)
         self.assertIn("llm-d max concurrency", " ".join(result.issues))
         self.assertIn("4 physical devices", " ".join(result.warnings))
 
@@ -562,7 +586,7 @@ class RecipeAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             recipe.variant_fingerprint,
-            "sha256:1d7d6390d1ce583d7a5f6de81eb7ffce3fa018d4ae60d8d47993b66f24331296",
+            "sha256:574a4f7d0fb677b4d9b01b7433e3916369092d591367d3e1502dd0add43a8f8b",
         )
         included = set(recipe._variant_document()) - {"fingerprint_version"}
         excluded = {"schema_version", "recipe_id", "configured_groups", "evidence"}

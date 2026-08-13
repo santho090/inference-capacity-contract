@@ -11,7 +11,7 @@
     "max_model_len": 1048576,
     "explicit_weight_bytes": null,
     "attention_type": "mla",
-    "kv_bytes_per_token_per_device_override": 4096,
+    "kv_bytes_per_token_per_device_override": null,
     "architecture": "ExampleLongContextMoEForCausalLM"
   },
   "artifact_bytes": 515396075520,
@@ -26,8 +26,7 @@
     "weight_dtype": "config.torch_dtype",
     "max_model_len": "config.max_position_embeddings",
     "attention_type": "derived:config-attention-fields",
-    "artifact_bytes": "safetensors-index.metadata.total_size",
-    "kv_bytes_per_token_per_device_override": "caller.measured-runtime-override"
+    "artifact_bytes": "safetensors-index.metadata.total_size"
   },
   "evidence": [
     {

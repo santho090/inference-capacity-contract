@@ -11,6 +11,7 @@ from inference_capacity_contract import (
     EvidenceRecord,
     HardwareSpec,
     ModelSpec,
+    RuntimeKVCapacityPoint,
     RuntimeVariant,
     WorkloadProfile,
     capacity_for,
@@ -88,27 +89,32 @@ class CapacityPropertyTests(unittest.TestCase):
         self.assertEqual(contract.memory_bytes_per_device["weights"], 700)
         self.assertNotIn("assume even sharding", " ".join(contract.warnings))
 
-    def test_explicit_kv_override_handles_custom_and_sub_byte_layouts(self) -> None:
-        overridden = capacity_for(
-            _model(attention_type="custom", kv_bytes_per_token_per_device_override=123),
+    def test_custom_and_sub_byte_layouts_require_exact_runtime_envelopes(self) -> None:
+        exact = capacity_for(
+            _model(attention_type="custom"),
             HardwareSpec("custom", "nvidia", 1, 10_000, memory_utilization_limit=1.0),
-            _runtime(),
+            _runtime(
+                kv_capacity_hardware_id="custom",
+                kv_capacity_memory_bytes_per_device=9900,
+                kv_capacity_envelope_override=(RuntimeKVCapacityPoint(100, 10),),
+            ),
         )
-        self.assertEqual(overridden.kv_bytes_per_token_per_device, 123)
+        self.assertIsNone(exact.kv_bytes_per_token_per_device)
+        self.assertEqual(exact.max_sequences_at(100), 10)
+
+        with self.assertRaisesRegex(ContractError, "runtime KV capacity envelope"):
+            capacity_for(
+                _model(attention_type="custom", kv_bytes_per_token_per_device_override=123),
+                HardwareSpec("custom", "nvidia", 1, 10_000, memory_utilization_limit=1.0),
+                _runtime(),
+            )
 
         with self.assertRaisesRegex(ContractError, "sub-byte"):
             capacity_for(
-                _model(num_layers=3, num_kv_heads=5, head_dim=7),
+                _model(kv_bytes_per_token_per_device_override=321),
                 HardwareSpec("int4", "nvidia", 1, 10_000, memory_utilization_limit=1.0),
                 _runtime(kv_cache_dtype="int4"),
             )
-
-        int4_override = capacity_for(
-            _model(kv_bytes_per_token_per_device_override=321),
-            HardwareSpec("int4", "nvidia", 1, 10_000, memory_utilization_limit=1.0),
-            _runtime(kv_cache_dtype="int4"),
-        )
-        self.assertEqual(int4_override.kv_bytes_per_token_per_device, 321)
 
     def test_kv_heads_per_device_cannot_exceed_model_layout(self) -> None:
         with self.assertRaisesRegex(ContractError, "cannot exceed"):
@@ -216,9 +222,13 @@ class CapacityPropertyTests(unittest.TestCase):
             HardwareSpec("large", "nvidia", 1, 20_000, memory_utilization_limit=1.0),
             replace(runtime, activation_reserve_bytes_per_device=1_000),
         )
-        self.assertGreaterEqual(larger.kv_capacity_blocks_per_device, smaller.kv_capacity_blocks_per_device)
+        smaller_blocks = smaller.kv_capacity_blocks_per_device
+        larger_blocks = larger.kv_capacity_blocks_per_device
+        reserve_blocks = larger_reserve.kv_capacity_blocks_per_device
+        assert smaller_blocks is not None and larger_blocks is not None and reserve_blocks is not None
+        self.assertGreaterEqual(larger_blocks, smaller_blocks)
         self.assertGreaterEqual(larger.max_context_tokens, smaller.max_context_tokens)
-        self.assertLessEqual(larger_reserve.kv_capacity_blocks_per_device, larger.kv_capacity_blocks_per_device)
+        self.assertLessEqual(reserve_blocks, larger_blocks)
 
     def test_sequence_capacity_is_monotone_in_context_and_honors_runtime_cap(self) -> None:
         contract = capacity_for(

@@ -1,6 +1,6 @@
 # Capacity contract specification
 
-Current schema identifier: `capacity-contract-2.0`
+Current schema identifier: `capacity-contract-3.0`
 
 The JSON document is the interchange format. Python dataclasses expose the same
 fields for callers using the library directly.
@@ -18,7 +18,7 @@ memory calculation.
 |---|---|---|
 | `model` | immutable ID/revision, parameter count, layers, KV heads, head dimension | One model artifact. Explicit resident bytes override nominal dtype arithmetic. |
 | `hardware` | ID, vendor, device count, memory per device | Devices allocated to one tensor-parallel replica. |
-| `runtime` | engine/version, TP size, KV dtype, block size, reserves | One pinned runtime variant. TP greater than one requires an explicit per-device KV-head layout; exact non-uniform weight layouts use a per-device byte override. |
+| `runtime` | engine/version, TP size, KV dtype, block size, reserves | One pinned runtime variant. Linear TP calculations require an explicit per-device KV-head layout; exact non-uniform weight layouts use a per-device byte override. Hybrid, MLA, custom, and sub-byte caches require context-bound runtime capacity. |
 
 For TP greater than one, `kv_heads_per_device` is the maximum number resident
 on any device. The product of that value and TP size must cover all logical KV
@@ -39,11 +39,11 @@ runtime unless matching evidence is attached.
 
 ## KV and concurrency
 
-For uniform full self-attention with equal K/V dimensions, the calculator
+`capacity-contract-3.0` has two KV capacity modes.
+
+For uniform full self-attention with equal K/V dimensions, `linear` mode
 derives per-device KV bytes/token from the layers, KV heads resident on that
-device, head dimension, and KV dtype. MLA, hybrid cache groups, unequal K/V
-dimensions, sub-byte formats, and custom attention require an explicit
-per-device override.
+device, head dimension, and KV dtype:
 
 ```text
 bytes_per_block_per_device
@@ -61,10 +61,18 @@ max_sequences_at(context_tokens)
 
 `runtime.max_num_seqs` caps the final value when configured.
 
-`concurrency_envelope` records this function at useful context lengths.
-Consumers may call the Python contract's `max_sequences_at(context_tokens)` for
-another point. The schema has no context-free maximum sequence field because
-the quantity is not a scalar.
+MLA, hybrid cache groups, unequal K/V dimensions, sub-byte formats, and custom
+attention use `context-envelope` mode. The runtime supplies exact
+`{context_tokens, max_sequences}` points plus the hardware ID and available KV
+memory bytes from the initialization run. Scalar bytes/token, block-capacity,
+and token-capacity fields are `null`. Requests for an unrecorded context raise
+`ContractError`; the library never interpolates or extrapolates these points.
+
+`concurrency_envelope` records the selected function or exact runtime points.
+In linear mode, consumers may call `max_sequences_at(context_tokens)` for any
+supported point. In context-envelope mode, they may call it only for a recorded
+point. The schema has no context-free maximum sequence field because the
+quantity is not a scalar.
 
 These capacities are per device because every TP device stores a shard of the
 same sequences. They are already the replica bottleneck and must not be
@@ -76,8 +84,10 @@ multiplied by `hardware.device_count`.
 
 1. declared runtime support for the hardware vendor;
 2. hardware device count equal to tensor-parallel size;
-3. a known per-device KV layout for TP greater than one; and
-4. enough usable memory for weights, reserves, and at least one KV block.
+3. a known per-device KV layout for a linear TP calculation, or an exact
+   runtime envelope for a non-linear layout; and
+4. either enough usable memory for one linear KV block or an envelope whose
+   hardware identity and KV memory budget match the contract.
 
 `capacity_for` raises `ContractError` for malformed or underspecified direct
 inputs. `what_fits` converts candidate-specific errors into
@@ -96,8 +106,7 @@ ceil(demand / (measured per-replica capacity × target utilization))
 The maximum driver is buffered and bounded by configured min/max replicas.
 Peak concurrency also requires `concurrency_context_tokens` and a
 measured `sustainable_concurrent_sequences_per_replica`. The solver uses the
-lower of that measurement and the contract's context-specific analytical KV
-bound.
+lower of that measurement and the contract's context-specific KV bound.
 
 The recommendation reports replica count, GPU-hours per hour, and GPU-hour
 delta. When a price is available, it also reports hourly cost and cost delta.
@@ -111,9 +120,11 @@ engine ranks. `physical_device_count` is the number of devices allocated to
 the group. `independent_kv_ranks` says how many ranks own separate KV pools.
 
 The audit calculates one KV-rank contract using the TP device count, then
-multiplies sequence and KV-token capacity by the number of independent KV
-ranks. It does not multiply capacity by expert-parallel size. EP changes model
-placement, so an EP recipe must supply resident weight bytes per device.
+multiplies sequence capacity by the number of independent KV ranks. Linear
+contracts also expose a total KV-token capacity; context-envelope contracts do
+not invent one. Capacity is never multiplied by expert-parallel size. EP
+changes model placement, so an EP recipe must supply resident weight bytes per
+device.
 
 For a context or concurrency-only request, the analytical memory bound can
 produce a group count. Nonzero RPS, prefill TPS, or decode TPS requires the
@@ -141,8 +152,9 @@ Latency targets and observations must use the same explicit percentile.
 
 The audit also compares llm-d block size, flow-control token limit, and maximum
 concurrent sequences with the calculated runtime values. It block-aligns the
-flow budget at the requested context and uses the lowest memory, runtime,
-llm-d, or measured concurrency limit when sizing groups. A mismatch makes the
+flow budget at the requested context and uses the lowest linear-memory or
+runtime-envelope, runtime, llm-d, or measured-profile concurrency limit when
+sizing groups. A mismatch makes the
 recipe `invalid`. The result records `recipe-audit-formula-2.0`, each sequence
 limit, the effective limit, and the recipe fingerprint used for every derived
 group and device count.
@@ -163,8 +175,9 @@ does not mean the model fits any hardware.
 `model-manifest-1.0` is the strict planning boundary. Creating it also requires
 SafeTensors metadata and provenance. Packed tensor elements are never used as
 logical model parameters. Mixed or unsupported weight layouts require measured
-resident bytes, and custom, MLA, or hybrid cache layouts require measured
-per-device KV bytes per token. A draft cannot be passed to `explore` or `plan`.
+resident bytes. Custom, MLA, and hybrid cache capacity is deliberately absent
+from the static model manifest and must come from the runtime inventory. A
+draft cannot be passed to `explore` or `plan`.
 Missing weight dtype is also unresolved; model resolution never defaults it to
 BF16.
 
@@ -190,10 +203,10 @@ code. The library does not fetch catalogs, convert currencies, or treat a
 reported maximum as reserved capacity.
 
 `runtime-inventory-1.0` records explicit runtime options, including engine and
-version, TP/EP layout, memory reserves, KV layout, llm-d limits, and optionally
-the accelerator identities known to support the option. An empty accelerator
-list is an unverified caller assumption, which appears as a warning rather
-than a compatibility claim.
+version, TP/EP layout, memory reserves, KV capacity mode, llm-d limits, and
+optionally the accelerator identities known to support the option. An empty
+accelerator list is an unverified caller assumption, which appears as a warning
+rather than a compatibility claim.
 
 A resolved quantized model manifest cannot use nominal parameter-count-by-bit
 width arithmetic as a resident-memory claim. A one-device candidate may use
@@ -248,7 +261,8 @@ memory, topology, and routing field is populated. The materialization helper
 requires a pinned model manifest and a matching measured initialization
 profile. It rejects model identity or revision mismatches, configured context
 above the manifest limit, mismatched host/runtime/topology identity, and a KV
-capacity that does not reconcile with the measured memory ledger.
+capacity envelope whose hardware or KV memory budget does not reconcile with
+the measured memory ledger.
 
 Structural flow-control concurrency is block aligned when a block size is
 known: complete flow-control blocks are divided by the blocks required for one
@@ -276,15 +290,18 @@ state break the equivalence.
 
 The provider planner accepts either the manifest or its contained `ModelSpec`.
 Passing the manifest avoids a manual translation step and preserves the same
-model identity, quantization, context, and KV-layout override. Model resolution
+model identity, quantization, and context. Model resolution
 remains optional; cached manifests and caller-fetched metadata support fully
 offline planning.
 
-`vllm-initialization-profile-1.0` carries measured per-device resident weights,
-runtime reserve, activation reserve, KV bytes/token, and KV token capacity. Its
-model revision must match the manifest used to complete the draft. Hardware ID,
-runtime engine/version, TP/DP/EP, physical device count, memory utilization, KV
-dtype, and block size must also match the draft.
+`vllm-initialization-profile-2.0` carries measured per-device resident weights,
+runtime reserve, activation reserve, available KV memory, `max_num_seqs`, and
+one or more context-bound sequence-capacity points. Its model revision must
+match the manifest used to complete the draft. Hardware ID, runtime
+engine/version, TP/DP/EP, physical device count, memory utilization, KV dtype,
+block size, and runtime concurrency limit must also match the draft. One
+measured evidence record binds the identity and memory metrics plus a canonical
+digest of the capacity envelope.
 
 The vLLM benchmark importer derives RPS, average request shape, prefill TPS, and
 decode TPS from completed requests, duration, and total token counters. This
@@ -300,8 +317,9 @@ validated by the dependency-free Python parsers.
 
 - `capacity-contract-1.0`: historical alpha schema with an invalid scalar
   sequence bound; retained for reference only.
-- `capacity-contract-2.0`: current breaking schema with block/token budgets and
-  a context-dependent concurrency envelope.
+- `capacity-contract-2.0`: historical schema with linear block/token budgets.
+- `capacity-contract-3.0`: current schema with explicit linear and exact
+  context-envelope capacity modes.
 - `serving-recipe-1.0` and `load-requirement-1.0`: host topology and requested
   load.
 - `recipe-audit-1.0`: historical audit without flow-aware group sizing.
@@ -311,8 +329,10 @@ validated by the dependency-free Python parsers.
   topology/routing checks before model memory is known.
 - `model-resolution-draft-1.0`: config-derived model facts, provenance, and
   unresolved inputs before weight metadata or runtime evidence is available.
-- `model-manifest-1.0` and `vllm-initialization-profile-1.0`: pinned static
-  metadata and measured runtime memory facts.
+- `model-manifest-1.0`: pinned static model metadata.
+- `vllm-initialization-profile-1.0`: historical scalar KV profile.
+- `vllm-initialization-profile-2.0`: current measured runtime memory and exact
+  context-capacity profile.
 - `provider-inventory-1.0`, `runtime-inventory-1.0`, and
   `measurement-inventory-1.0`: caller-supplied planning inputs.
 - `capacity-exploration-1.0` and `capacity-plan-1.0`: ranked single-model

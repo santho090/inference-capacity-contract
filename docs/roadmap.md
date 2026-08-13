@@ -13,6 +13,11 @@ autoscaler adapters should call it instead of reimplementing its rules.
 - tighten the 2.0 schemas; and
 - align README and security guidance with repository behavior.
 
+The 3.0 capacity contract now separates uniform linear KV arithmetic from
+exact context-bound capacity for hybrid, MLA, custom, and sub-byte layouts. A
+runtime envelope is reusable only when its hardware identity and KV memory
+budget match.
+
 This phase is done when source-tree and installed-wheel checks pass on Python
 3.12 and 3.13.
 
@@ -36,8 +41,9 @@ enforcement, optional metadata resolution, SafeTensors header-range parsing,
 offline manifest caches, partial llm-d recipe import, vLLM initialization
 evidence, and benchmark operating-point import. Nested text configs, explicit
 head dimensions, hybrid attention, and mixed quantization are recognized;
-unresolved runtime facts are returned in a versioned model-resolution draft
-rather than guessed.
+unresolved model facts are returned in a versioned model-resolution draft,
+while runtime-specific KV capacity stays in the initialization profile and
+runtime inventory.
 
 - [x] resolve Hugging Face references to immutable revisions;
 - parse config and SafeTensors metadata without downloading full weights;
