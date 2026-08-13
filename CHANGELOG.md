@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.0
+
+- Adds dependency-free import of caller-parsed llm-d values into partial
+  recipe drafts.
+- Adds structural audits for TP/DP device assignment, configured concurrency,
+  KV block agreement, and flow-control shape before model memory is known.
+- Resolves only immutable Hugging Face revisions and caches replayable model
+  manifests.
+- Records stored tensor element counts from SafeTensors header ranges without
+  downloading tensor payloads.
+- Keeps serialized artifact bytes separate from measured resident GPU bytes.
+- Imports vLLM initialization memory facts and exact benchmark operating points.
+- Materializes a complete recipe only when model, runtime, hardware, topology,
+  context, and measured KV capacity agree.
+- Makes structural flow-control concurrency block aligned.
+- Prevents serialized drafts from omitting required unresolved facts.
+- Preserves matching immutable model revisions found in llm-d metadata,
+  artifact URIs, or runtime flags and rejects conflicting revisions.
+- Adds sanitized long-context TP8 and DP4-on-eight-device golden cases.
+
+Provider discovery, performance prediction, and live infrastructure changes
+remain outside the library. Traffic sizing still requires measurements from
+the exact recipe fingerprint and operating point.
+
 ## 0.3.0
 
 - Adds a normalized serving recipe for TP, DP, EP, physical device, and

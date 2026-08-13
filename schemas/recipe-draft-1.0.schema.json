@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santho090.github.io/inference-capacity-contract/schemas/recipe-draft-1.0.schema.json",
+  "title": "Partial Serving Recipe Draft 1.0",
+  "type": "object",
+  "required": ["schema_version", "recipe_id", "document", "unresolved", "warnings", "ready"],
+  "properties": {
+    "schema_version": {"const": "recipe-draft-1.0"},
+    "recipe_id": {"type": "string", "minLength": 1},
+    "document": {"type": "object"},
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "reason", "required_for"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1},
+          "required_for": {"enum": ["identity", "memory", "topology", "routing", "traffic"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "ready": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

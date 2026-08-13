@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inference-capacity-contract"
-version = "0.3.0"
+version = "0.4.0"
 description = "Deterministic, evidence-aware capacity contracts for LLM model and hardware fit"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -16,6 +16,7 @@ classifiers = [
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = []

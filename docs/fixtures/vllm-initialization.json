@@ -1,0 +1,18 @@
+{
+  "model_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "hardware_id": "example-accelerator-x8-288gb",
+  "runtime_engine": "vllm",
+  "runtime_version": "example-pinned-image",
+  "tensor_parallel_size": 8,
+  "data_parallel_size": 1,
+  "expert_parallel_size": 8,
+  "physical_device_count": 8,
+  "memory_utilization_limit": 0.96,
+  "kv_cache_dtype": "fp8",
+  "block_size_tokens": 1536,
+  "weight_bytes_per_device": 64424509440,
+  "runtime_overhead_bytes_per_device": 2147483648,
+  "activation_reserve_bytes_per_device": 4294967296,
+  "kv_bytes_per_token_per_device": 4096,
+  "kv_capacity_tokens_per_device": 55174656
+}

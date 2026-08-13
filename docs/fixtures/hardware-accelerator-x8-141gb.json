@@ -1,0 +1,8 @@
+{
+  "hardware_id": "example-accelerator-x8-141gb",
+  "vendor": "nvidia",
+  "device_count": 8,
+  "memory_bytes_per_device": 151397597184,
+  "memory_utilization_limit": 0.9,
+  "interconnect": "high-bandwidth-device-fabric"
+}

@@ -17,13 +17,19 @@ The result is a versioned JSON contract with:
 - llm-d planner and scaling-policy payloads;
 - measured-profile replica recommendations with cost and GPU-hour deltas;
 - TP, DP, and EP serving recipe checks; and
+- partial llm-d recipe imports that preserve unresolved facts;
+- pinned Hugging Face metadata manifests with field-level provenance;
+- SafeTensors header inspection without downloading tensor payloads;
+- vLLM initialization and benchmark evidence import; and
 - a direct answer for whether a configured recipe can handle the requested
   context and load.
 
-The library does not start vLLM or SGLang, discover GPUs, resolve Hugging Face
-models, query provider catalogs, mutate a cluster, or claim throughput and
-latency from model parameters. Callers supply pinned model and hardware facts.
-Runtime initialization and SLO performance require matching measured evidence.
+The library does not start vLLM or SGLang, discover GPUs, query provider
+catalogs, mutate a cluster, or claim throughput and latency from model
+parameters. Hugging Face resolution is optional and read-only: it accepts only
+an immutable commit SHA, fetches metadata and SafeTensors headers, and caches a
+replayable manifest. Runtime initialization and SLO performance still require
+matching measured evidence.
 
 ## Why the contract is useful
 
@@ -60,6 +66,10 @@ installed separately with `python -m pip install -e '.[dev]'`.
 | Which supplied hardware candidates fit? | `what_fits` | `icc fit` |
 | How many replicas does a measured workload need? | `recommend_scale` | `icc scale` |
 | Is this complete TP/DP/EP and llm-d recipe good for this load? | `audit_recipe` | `icc audit` |
+| What can be checked before all recipe facts are known? | `audit_recipe_draft` | `icc import-llmd`, `icc audit-draft` |
+| How do I pin model metadata without downloading weights? | `resolve_huggingface_manifest` | `icc import-model-manifest` for caller-fetched metadata |
+| How do I complete a draft after initialization? | `materialize_recipe_draft` | `icc materialize-recipe` |
+| How do I bind vLLM measurements to a recipe? | importer functions | `icc import-vllm-init`, `icc import-vllm-benchmark` |
 | Is an existing capacity document valid? | `CapacityContract.from_dict` | `icc validate` |
 | How do I pass a contract to another planner? | adapter functions | `icc export` |
 
@@ -136,6 +146,92 @@ icc export \
 
 `fit` checks every hardware and runtime pair. If a pair is unsupported, the
 result includes `unsupported_reason` and the search continues.
+
+## Import an existing llm-d recipe
+
+`import_llmd_values` accepts an already-parsed values mapping. The CLI accepts
+the same document as JSON, so YAML parsing remains the caller's choice and the
+runtime package keeps no third-party dependencies.
+
+```bash
+icc import-llmd \
+  --values docs/fixtures/llmd-values-long-context-tp8.json \
+  --hardware docs/fixtures/hardware-accelerator-x8-288gb.json \
+  --output recipe-draft.json
+
+icc audit-draft --draft recipe-draft.json
+```
+
+The draft reports every unresolved field. Topology, block-size, device-use,
+and flow-control checks run immediately. `to_serving_recipe()` remains blocked
+until the model revision, architecture, resident memory, KV layout, and runtime
+reserves are present.
+
+The importer deliberately does not treat a model download size as resident GPU
+memory. A model manifest records serialized artifact bytes separately. The
+per-device placement override comes from `import_vllm_initialization`.
+
+## Resolve and measure the exact variant
+
+`resolve_huggingface_manifest` requires a 40-character commit SHA. It reads
+`config.json`, the SafeTensors index, and the header range of each shard. Tensor
+payloads are not downloaded. The normalized manifest can be cached and replayed
+offline.
+
+For environments that fetch metadata themselves, use
+`import_huggingface_manifest` or the CLI:
+
+```bash
+icc import-model-manifest \
+  --repo-id example/long-context-moe \
+  --revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --config docs/fixtures/model-config-long-context-moe.json \
+  --safetensors-index docs/fixtures/model-safetensors-index-long-context-moe.json \
+  --kv-bytes-per-token-per-device 4096 \
+  --output model-manifest.json
+```
+
+Quantized or mixed-dtype manifests need the logical parameter count from the
+model config or an explicit caller value. SafeTensors headers describe stored
+tensors, which may be packed and may include scale tensors; ICC records their
+element count separately. Custom, hybrid, and MLA cache layouts still need a
+measured KV-bytes/token override.
+
+Once vLLM has initialized, normalize its measured memory ledger. Once a serving
+benchmark has completed, bind its counters and latency percentile to the exact
+recipe fingerprint:
+
+```bash
+icc import-vllm-init \
+  --input docs/fixtures/vllm-initialization.json \
+  --source benchmark://initialization-run \
+  --output initialization.json
+
+icc materialize-recipe \
+  --draft recipe-draft.json \
+  --manifest model-manifest.json \
+  --initialization initialization.json \
+  --precise-prefix-routing \
+  --output serving-recipe.json
+
+icc import-vllm-benchmark \
+  --recipe serving-recipe.json \
+  --benchmark docs/fixtures/vllm-benchmark-serve.json \
+  --context-tokens 1048576 \
+  --concurrent-sequences 16 \
+  --latency-percentile 99 \
+  --source benchmark://serve-run
+```
+
+`materialize-recipe` is the evidence gate between configuration inspection and
+a complete serving recipe. It rejects a different model identity or revision,
+a configured context above the model limit, a mismatched host/runtime/topology,
+and an initialization KV capacity that does not reconcile with the measured
+memory ledger. The routing flag is mandatory because KV events alone do not
+identify the deployed routing policy.
+
+See [the sanitized deployment-shaped cases](docs/case-studies.md) for what the
+draft audit can and cannot conclude.
 
 ## Audit an existing serving recipe
 

@@ -2,6 +2,25 @@
 
 from .adapters import to_llmd_planner_payload, to_scaling_policy_input
 from .calculator import capacity_for, what_fits
+from .drafts import (
+    RecipeDraft,
+    StructuralAuditStatus,
+    StructuralRecipeAudit,
+    UnresolvedFact,
+    audit_recipe_draft,
+    import_llmd_values,
+)
+from .importers import (
+    ModelManifest,
+    VLLMInitializationProfile,
+    import_huggingface_manifest,
+    import_vllm_benchmark,
+    import_vllm_initialization,
+    materialize_recipe_draft,
+    parse_safetensors_header,
+    resolve_huggingface_manifest,
+    tensor_element_count_from_safetensors_headers,
+)
 from .models import (
     CapacityContract,
     ConcurrencyPoint,
@@ -55,4 +74,19 @@ __all__ = [
     "RECIPE_VARIANT_FINGERPRINT_VERSION",
     "ServingRecipe",
     "audit_recipe",
+    "RecipeDraft",
+    "StructuralAuditStatus",
+    "StructuralRecipeAudit",
+    "UnresolvedFact",
+    "audit_recipe_draft",
+    "import_llmd_values",
+    "ModelManifest",
+    "VLLMInitializationProfile",
+    "import_huggingface_manifest",
+    "import_vllm_benchmark",
+    "import_vllm_initialization",
+    "materialize_recipe_draft",
+    "parse_safetensors_header",
+    "resolve_huggingface_manifest",
+    "tensor_element_count_from_safetensors_headers",
 ]

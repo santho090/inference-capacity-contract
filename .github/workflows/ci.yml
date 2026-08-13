@@ -14,8 +14,8 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install development tools
@@ -48,3 +48,31 @@ jobs:
             --recipe docs/fixtures/serving-recipe-hybrid-tp8.json \
             --load docs/fixtures/load-context-concurrency.json \
             --output /tmp/icc-audit.json
+          /tmp/icc-venv/bin/icc import-llmd \
+            --values docs/fixtures/llmd-values-long-context-tp8.json \
+            --hardware docs/fixtures/hardware-accelerator-x8-288gb.json \
+            --output /tmp/icc-draft.json
+          /tmp/icc-venv/bin/icc audit-draft \
+            --draft /tmp/icc-draft.json \
+            --output /tmp/icc-structural-audit.json
+          /tmp/icc-venv/bin/icc import-vllm-init \
+            --input docs/fixtures/vllm-initialization.json \
+            --source benchmark://ci-initialization \
+            --output /tmp/icc-initialization.json
+          /tmp/icc-venv/bin/icc import-model-manifest \
+            --repo-id example/long-context-moe \
+            --revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            --config docs/fixtures/model-config-long-context-moe.json \
+            --safetensors-index docs/fixtures/model-safetensors-index-long-context-moe.json \
+            --kv-bytes-per-token-per-device 4096 \
+            --output /tmp/icc-manifest.json
+          /tmp/icc-venv/bin/icc materialize-recipe \
+            --draft /tmp/icc-draft.json \
+            --manifest /tmp/icc-manifest.json \
+            --initialization /tmp/icc-initialization.json \
+            --precise-prefix-routing \
+            --output /tmp/icc-materialized-recipe.json
+          /tmp/icc-venv/bin/icc audit \
+            --recipe /tmp/icc-materialized-recipe.json \
+            --load docs/fixtures/load-context-concurrency.json \
+            --output /tmp/icc-materialized-audit.json

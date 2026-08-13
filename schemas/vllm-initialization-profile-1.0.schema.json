@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santho090.github.io/inference-capacity-contract/schemas/vllm-initialization-profile-1.0.schema.json",
+  "title": "vLLM Initialization Profile 1.0",
+  "type": "object",
+  "required": [
+    "schema_version", "model_revision", "hardware_id", "runtime_engine",
+    "runtime_version", "tensor_parallel_size", "data_parallel_size",
+    "expert_parallel_size", "physical_device_count", "memory_utilization_limit",
+    "kv_cache_dtype", "block_size_tokens", "weight_bytes_per_device",
+    "runtime_overhead_bytes_per_device", "activation_reserve_bytes_per_device",
+    "kv_bytes_per_token_per_device", "kv_capacity_tokens_per_device", "evidence"
+  ],
+  "properties": {
+    "schema_version": {"const": "vllm-initialization-profile-1.0"},
+    "model_revision": {"type": "string", "minLength": 1},
+    "hardware_id": {"type": "string", "minLength": 1},
+    "runtime_engine": {"type": "string", "minLength": 1},
+    "runtime_version": {"type": "string", "minLength": 1},
+    "tensor_parallel_size": {"type": "integer", "minimum": 1},
+    "data_parallel_size": {"type": "integer", "minimum": 1},
+    "expert_parallel_size": {"type": "integer", "minimum": 1},
+    "physical_device_count": {"type": "integer", "minimum": 1},
+    "memory_utilization_limit": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+    "kv_cache_dtype": {"type": "string", "minLength": 1},
+    "block_size_tokens": {"type": "integer", "minimum": 1},
+    "weight_bytes_per_device": {"type": "integer", "minimum": 1},
+    "runtime_overhead_bytes_per_device": {"type": "integer", "minimum": 0},
+    "activation_reserve_bytes_per_device": {"type": "integer", "minimum": 0},
+    "kv_bytes_per_token_per_device": {"type": "integer", "minimum": 1},
+    "kv_capacity_tokens_per_device": {"type": "integer", "minimum": 1},
+    "evidence": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/evidence"}
+  },
+  "additionalProperties": false
+}

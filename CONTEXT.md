@@ -10,6 +10,9 @@ calculating LLM serving capacity.
 - **Hardware topology**: vendor, device count, memory, and optional price/interconnect metadata.
 - **Evidence record**: provenance for analytical, measured, reported, or extrapolated claims.
 - **Capacity contract**: versioned capacity output that does not change infrastructure.
+- **Recipe draft**: partial imported configuration with explicit unresolved facts.
+- **Model manifest**: replayable facts from one immutable model artifact revision.
+- **Initialization profile**: measured per-device runtime memory and KV facts.
 - **Scaling policy input**: per-replica facts consumed by a separate workload-aware autoscaling adapter.
 
 ## Design rule

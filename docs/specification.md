@@ -148,6 +148,49 @@ This schema does not represent pipeline parallelism or separate prefill and
 decode worker pools. Adapters must reject those topologies rather than map them
 to TP/DP/EP defaults.
 
+## Partial recipe import
+
+`recipe-draft-1.0` is a partial normalization boundary for existing llm-d
+values. It preserves missing facts as structured `UnresolvedFact` records.
+`structural-recipe-audit-1.0` may check TP/DP device assignment, configured
+concurrency, runtime/llm-d block agreement, and flow-control shape before model
+memory is known. It cannot report memory fit or traffic capacity.
+
+A draft becomes a `serving-recipe-1.0` only after every required identity,
+memory, topology, and routing field is populated. The materialization helper
+requires a pinned model manifest and a matching measured initialization
+profile. It rejects model identity or revision mismatches, configured context
+above the manifest limit, mismatched host/runtime/topology identity, and a KV
+capacity that does not reconcile with the measured memory ledger.
+
+Structural flow-control concurrency is block aligned when a block size is
+known: complete flow-control blocks are divided by the blocks required for one
+maximum-context sequence. Raw token division must not overstate a boundary
+case.
+
+## Model and vLLM evidence import
+
+`model-manifest-1.0` records immutable model facts, serialized artifact bytes,
+and field-level provenance. Serialized SafeTensors bytes are not resident GPU
+bytes. SafeTensors shard headers provide exact tensor shapes without requiring
+the tensor payloads. Their stored tensor element count is not treated as the
+model's logical parameter count because packed quantization and scale tensors
+break that equivalence. A quantized manifest needs the logical parameter count
+from the config or caller; the resolver does not derive it from artifact size,
+stored shapes, or nominal dtype.
+
+`vllm-initialization-profile-1.0` carries measured per-device resident weights,
+runtime reserve, activation reserve, KV bytes/token, and KV token capacity. Its
+model revision must match the manifest used to complete the draft. Hardware ID,
+runtime engine/version, TP/DP/EP, physical device count, memory utilization, KV
+dtype, and block size must also match the draft.
+
+The vLLM benchmark importer derives RPS, average request shape, prefill TPS, and
+decode TPS from completed requests, duration, and total token counters. This
+keeps all rates arithmetically consistent. It binds those fields and the exact
+requested latency percentile to one recipe fingerprint in one measured
+evidence record.
+
 ## Schema history
 
 The schemas describe normalized output from `to_dict()`, including nullable and
@@ -160,3 +203,7 @@ validated by the dependency-free Python parsers.
   a context-dependent concurrency envelope.
 - `serving-recipe-1.0`, `load-requirement-1.0`, and `recipe-audit-1.0`: host
   topology, requested load, and the resulting configuration audit.
+- `recipe-draft-1.0` and `structural-recipe-audit-1.0`: partial import and
+  topology/routing checks before model memory is known.
+- `model-manifest-1.0` and `vllm-initialization-profile-1.0`: pinned static
+  metadata and measured runtime memory facts.

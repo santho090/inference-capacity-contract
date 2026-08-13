@@ -31,6 +31,11 @@ schema, source-tree, and installed-wheel tests.
 
 ## Phase 1: model resolution and quantized artifacts
 
+Building blocks now available: immutable revision enforcement, optional
+metadata resolution, SafeTensors header-range parsing, offline manifest caches,
+partial llm-d recipe import, vLLM initialization evidence, and benchmark
+operating-point import.
+
 - resolve Hugging Face references to immutable revisions;
 - parse config and SafeTensors metadata without downloading full weights;
 - cache normalized manifests for offline use;

@@ -10,6 +10,15 @@ from typing import Any
 
 from .adapters import to_llmd_planner_payload, to_scaling_policy_input
 from .calculator import capacity_for, what_fits
+from .drafts import RecipeDraft, audit_recipe_draft, import_llmd_values
+from .importers import (
+    ModelManifest,
+    VLLMInitializationProfile,
+    import_huggingface_manifest,
+    import_vllm_benchmark,
+    import_vllm_initialization,
+    materialize_recipe_draft,
+)
 from .models import CapacityContract, HardwareInventory, HardwareSpec, ModelSpec, RuntimeVariant, WorkloadProfile
 from .recipe import LoadRequirement, ServingRecipe, audit_recipe
 from .scaling import recommend_scale
@@ -65,6 +74,55 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--recipe", required=True)
     audit.add_argument("--load", required=True)
     audit.add_argument("--output")
+
+    import_llmd = sub.add_parser("import-llmd", help="normalize caller-parsed llm-d values into a recipe draft")
+    import_llmd.add_argument("--values", required=True, help="llm-d values JSON file")
+    import_llmd.add_argument("--hardware", required=True, help="hardware JSON file")
+    import_llmd.add_argument("--recipe-id")
+    import_llmd.add_argument("--source", default="llmd-values://caller-supplied")
+    import_llmd.add_argument("--output")
+
+    audit_draft = sub.add_parser("audit-draft", help="audit topology and routing facts in a recipe draft")
+    audit_draft.add_argument("--draft", required=True)
+    audit_draft.add_argument("--output")
+
+    manifest = sub.add_parser("import-model-manifest", help="normalize pinned Hugging Face metadata")
+    manifest.add_argument("--repo-id", required=True)
+    manifest.add_argument("--revision", required=True)
+    manifest.add_argument("--config", required=True)
+    manifest.add_argument("--safetensors-index", required=True)
+    manifest.add_argument("--kv-bytes-per-token-per-device", type=int)
+    manifest.add_argument("--parameter-count", type=int)
+    manifest.add_argument("--output")
+
+    initialization = sub.add_parser("import-vllm-init", help="normalize vLLM initialization memory evidence")
+    initialization.add_argument("--input", required=True)
+    initialization.add_argument("--source", required=True)
+    initialization.add_argument("--output")
+
+    materialize = sub.add_parser(
+        "materialize-recipe",
+        help="complete a recipe draft with a pinned model manifest and initialization profile",
+    )
+    materialize.add_argument("--draft", required=True)
+    materialize.add_argument("--manifest", required=True)
+    materialize.add_argument("--initialization", required=True)
+    materialize.add_argument(
+        "--precise-prefix-routing",
+        action=argparse.BooleanOptionalAction,
+        required=True,
+        help="declare whether the deployed routing policy uses precise prefix routing",
+    )
+    materialize.add_argument("--output")
+
+    benchmark = sub.add_parser("import-vllm-benchmark", help="bind vLLM benchmark counters to a recipe")
+    benchmark.add_argument("--recipe", required=True)
+    benchmark.add_argument("--benchmark", required=True)
+    benchmark.add_argument("--context-tokens", required=True, type=int)
+    benchmark.add_argument("--concurrent-sequences", type=int)
+    benchmark.add_argument("--latency-percentile", required=True, type=float)
+    benchmark.add_argument("--source", required=True)
+    benchmark.add_argument("--output")
     return parser
 
 
@@ -100,10 +158,53 @@ def main(argv: list[str] | None = None) -> int:
             contract = CapacityContract.from_dict(_read(args.contract))
             profile = WorkloadProfile.from_dict(_read(args.profile))
             _write(recommend_scale(contract, profile).to_dict(), args.output)
-        else:
+        elif args.command == "audit":
             recipe = ServingRecipe.from_dict(_read(args.recipe))
             load = LoadRequirement.from_dict(_read(args.load))
             _write(audit_recipe(recipe, load).to_dict(), args.output)
+        elif args.command == "import-llmd":
+            draft = import_llmd_values(
+                _read(args.values),
+                host=HardwareSpec.from_dict(_read(args.hardware)),
+                recipe_id=args.recipe_id,
+                source=args.source,
+            )
+            _write(draft.to_dict(), args.output)
+        elif args.command == "audit-draft":
+            _write(audit_recipe_draft(RecipeDraft.from_dict(_read(args.draft))).to_dict(), args.output)
+        elif args.command == "import-model-manifest":
+            manifest = import_huggingface_manifest(
+                args.repo_id,
+                args.revision,
+                _read(args.config),
+                _read(args.safetensors_index),
+                kv_bytes_per_token_per_device_override=args.kv_bytes_per_token_per_device,
+                parameter_count_override=args.parameter_count,
+            )
+            _write(manifest.to_dict(), args.output)
+        elif args.command == "import-vllm-init":
+            _write(import_vllm_initialization(_read(args.input), source=args.source).to_dict(), args.output)
+        elif args.command == "materialize-recipe":
+            recipe = materialize_recipe_draft(
+                RecipeDraft.from_dict(_read(args.draft)),
+                ModelManifest.from_dict(_read(args.manifest)),
+                VLLMInitializationProfile.from_dict(_read(args.initialization)),
+                precise_prefix_routing=args.precise_prefix_routing,
+            )
+            _write(recipe.to_dict(), args.output)
+        elif args.command == "import-vllm-benchmark":
+            recipe = ServingRecipe.from_dict(_read(args.recipe))
+            benchmark_profile = import_vllm_benchmark(
+                recipe,
+                _read(args.benchmark),
+                context_tokens=args.context_tokens,
+                concurrent_sequences=args.concurrent_sequences,
+                latency_percentile=args.latency_percentile,
+                source=args.source,
+            )
+            _write(benchmark_profile.to_dict(), args.output)
+        else:
+            raise ValueError(f"unknown command {args.command!r}")
         return 0
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         print(f"icc: error: {exc}", file=sys.stderr)

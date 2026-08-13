@@ -1,0 +1,32 @@
+{
+  "metadata": {
+    "model_name": "example/long-context-moe",
+    "max_num_seqs": 24,
+    "max_model_len": 1048576,
+    "tensor_parallel_size": 8,
+    "data_parallel_size": 1,
+    "kv_block_size": 1536,
+    "epp": {
+      "flow_control_token_limit": 2104030,
+      "output_ratio": 0.2,
+      "max_estimated_output_tokens": 500
+    }
+  },
+  "modelservice": {
+    "modelArtifacts": {
+      "uri": "hf://example/long-context-moe",
+      "name": "example/long-context-moe"
+    },
+    "decode": {
+      "containers": [
+        {
+          "name": "vllm",
+          "image": "vllm/vllm-openai:example-pinned-image",
+          "args": [
+            "vllm serve example/long-context-moe --gpu-memory-utilization 0.96 --tensor-parallel-size 8 --max-num-seqs 24 --max-model-len 1048576 --kv-cache-dtype fp8 --enable-expert-parallel --block-size 1536 --kv-events-config enabled"
+          ]
+        }
+      ]
+    }
+  }
+}

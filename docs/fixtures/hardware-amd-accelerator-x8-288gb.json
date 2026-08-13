@@ -1,0 +1,8 @@
+{
+  "hardware_id": "example-amd-accelerator-x8-288gb",
+  "vendor": "amd",
+  "device_count": 8,
+  "memory_bytes_per_device": 309237645312,
+  "memory_utilization_limit": 0.9,
+  "interconnect": "high-bandwidth-device-fabric"
+}

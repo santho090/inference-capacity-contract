@@ -20,7 +20,11 @@ from inference_capacity_contract import (
     ServingRecipe,
     WorkloadProfile,
     audit_recipe,
+    audit_recipe_draft,
     capacity_for,
+    import_huggingface_manifest,
+    import_llmd_values,
+    import_vllm_initialization,
     recommend_scale,
 )
 
@@ -42,11 +46,71 @@ class SchemaTests(unittest.TestCase):
         self.recipe_schema = _read_schema("serving-recipe-1.0.schema.json")
         self.load_schema = _read_schema("load-requirement-1.0.schema.json")
         self.audit_schema = _read_schema("recipe-audit-1.0.schema.json")
+        self.draft_schema = _read_schema("recipe-draft-1.0.schema.json")
+        self.structural_audit_schema = _read_schema("structural-recipe-audit-1.0.schema.json")
+        self.manifest_schema = _read_schema("model-manifest-1.0.schema.json")
+        self.initialization_schema = _read_schema("vllm-initialization-profile-1.0.schema.json")
         Draft202012Validator.check_schema(self.capacity_schema)
         Draft202012Validator.check_schema(self.scaling_schema)
         Draft202012Validator.check_schema(self.recipe_schema)
         Draft202012Validator.check_schema(self.load_schema)
         Draft202012Validator.check_schema(self.audit_schema)
+        Draft202012Validator.check_schema(self.draft_schema)
+        Draft202012Validator.check_schema(self.structural_audit_schema)
+        Draft202012Validator.check_schema(self.manifest_schema)
+        Draft202012Validator.check_schema(self.initialization_schema)
+
+    def test_draft_manifest_and_initialization_documents_validate(self) -> None:
+        values = json.loads(
+            (ROOT / "docs" / "fixtures" / "llmd-values-long-context-tp8.json").read_text(encoding="utf-8")
+        )
+        hardware = HardwareSpec.from_dict(
+            json.loads((ROOT / "docs" / "fixtures" / "hardware-accelerator-x8-288gb.json").read_text(encoding="utf-8"))
+        )
+        draft = import_llmd_values(values, host=hardware)
+        structural = audit_recipe_draft(draft)
+        manifest = import_huggingface_manifest(
+            "example/model",
+            "a" * 40,
+            {
+                "num_hidden_layers": 2,
+                "num_key_value_heads": 1,
+                "num_attention_heads": 2,
+                "hidden_size": 128,
+                "max_position_embeddings": 1024,
+                "torch_dtype": "float16",
+                "num_parameters": 1024,
+            },
+            {"metadata": {"total_size": 2048}},
+        )
+        initialization = import_vllm_initialization(
+            {
+                "model_revision": "a" * 40,
+                "hardware_id": "h100",
+                "runtime_engine": "vllm",
+                "runtime_version": "0.8.5",
+                "tensor_parallel_size": 1,
+                "data_parallel_size": 1,
+                "expert_parallel_size": 1,
+                "physical_device_count": 1,
+                "memory_utilization_limit": 0.9,
+                "kv_cache_dtype": "bf16",
+                "block_size_tokens": 16,
+                "weight_bytes_per_device": 2048,
+                "runtime_overhead_bytes_per_device": 0,
+                "activation_reserve_bytes_per_device": 0,
+                "kv_bytes_per_token_per_device": 512,
+                "kv_capacity_tokens_per_device": 1000,
+            },
+            source="benchmark://schema-init",
+        )
+        registry = Registry().with_resource(
+            str(self.capacity_schema["$id"]), Resource.from_contents(self.capacity_schema)
+        )
+        Draft202012Validator(self.draft_schema).validate(draft.to_dict())
+        Draft202012Validator(self.structural_audit_schema).validate(structural.to_dict())
+        Draft202012Validator(self.manifest_schema, registry=registry).validate(manifest.to_dict())
+        Draft202012Validator(self.initialization_schema, registry=registry).validate(initialization.to_dict())
 
     def test_recipe_load_and_audit_documents_validate(self) -> None:
         recipe_document = json.loads(

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santho090.github.io/inference-capacity-contract/schemas/structural-recipe-audit-1.0.schema.json",
+  "title": "Structural Recipe Audit 1.0",
+  "type": "object",
+  "required": [
+    "schema_version", "status", "engine_rank_count", "unused_device_count",
+    "configured_max_concurrent_sequences", "flow_control_full_context_sequences",
+    "issues", "warnings", "unresolved", "suggestions"
+  ],
+  "properties": {
+    "schema_version": {"const": "structural-recipe-audit-1.0"},
+    "status": {"enum": ["valid", "incomplete", "invalid"]},
+    "engine_rank_count": {"type": ["integer", "null"], "minimum": 1},
+    "unused_device_count": {"type": ["integer", "null"]},
+    "configured_max_concurrent_sequences": {"type": ["integer", "null"], "minimum": 1},
+    "flow_control_full_context_sequences": {"type": ["integer", "null"], "minimum": 0},
+    "issues": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "reason", "required_for"],
+        "properties": {
+          "path": {"type": "string"},
+          "reason": {"type": "string"},
+          "required_for": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "suggestions": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}
