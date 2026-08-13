@@ -24,3 +24,13 @@ def sequence_capacity(
     if max_num_seqs is not None:
         max_sequences = min(max_sequences, max_num_seqs)
     return blocks_per_sequence, max_sequences
+
+
+def block_aligned_sequence_capacity(
+    capacity_tokens: int,
+    block_size_tokens: int,
+    context_tokens: int,
+) -> int:
+    capacity_blocks = capacity_tokens // block_size_tokens
+    blocks_per_sequence = ceil_div(context_tokens, block_size_tokens)
+    return capacity_blocks // blocks_per_sequence

@@ -45,7 +45,7 @@ class SchemaTests(unittest.TestCase):
         self.scaling_schema = _read_schema("scaling-recommendation-2.0.schema.json")
         self.recipe_schema = _read_schema("serving-recipe-1.0.schema.json")
         self.load_schema = _read_schema("load-requirement-1.0.schema.json")
-        self.audit_schema = _read_schema("recipe-audit-1.0.schema.json")
+        self.audit_schema = _read_schema("recipe-audit-2.0.schema.json")
         self.draft_schema = _read_schema("recipe-draft-1.0.schema.json")
         self.structural_audit_schema = _read_schema("structural-recipe-audit-1.0.schema.json")
         self.manifest_schema = _read_schema("model-manifest-1.0.schema.json")
@@ -129,6 +129,9 @@ class SchemaTests(unittest.TestCase):
         Draft202012Validator(self.recipe_schema, registry=registry).validate(recipe.to_dict())
         Draft202012Validator(self.load_schema, registry=registry).validate(load.to_dict())
         Draft202012Validator(self.audit_schema, registry=registry).validate(audit)
+        self.assertEqual(audit["schema_version"], "recipe-audit-2.0")
+        self.assertEqual(audit["formula_version"], "recipe-audit-formula-2.0")
+        self.assertEqual(audit["effective_sequences_per_group"], 24)
         self.assertEqual(audit["status"], "sufficient")
 
         measured = MeasuredGroupProfile(

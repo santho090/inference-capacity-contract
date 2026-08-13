@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Makes serving-recipe group sizing honor the block-aligned llm-d flow-control
+  budget at the requested context.
+- Reports every sequence-capacity limit and the effective per-group limit.
+- Returns no finite group count when a group cannot serve one requested
+  sequence.
+- Adds the `recipe-audit-2.0` schema. The historical 1.0 schema remains for
+  reference.
+
 ## 0.4.0
 
 - Adds dependency-free import of caller-parsed llm-d values into partial

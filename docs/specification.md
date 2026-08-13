@@ -140,9 +140,12 @@ decode TPS. When both forms are supplied, their token rates must agree.
 Latency targets and observations must use the same explicit percentile.
 
 The audit also compares llm-d block size, flow-control token limit, and maximum
-concurrent sequences with the calculated runtime values. A mismatch makes the
-recipe `invalid`. The result records `recipe-audit-formula-1.0` and the recipe
-fingerprint used for every derived group and device count.
+concurrent sequences with the calculated runtime values. It block-aligns the
+flow budget at the requested context and uses the lowest memory, runtime,
+llm-d, or measured concurrency limit when sizing groups. A mismatch makes the
+recipe `invalid`. The result records `recipe-audit-formula-2.0`, each sequence
+limit, the effective limit, and the recipe fingerprint used for every derived
+group and device count.
 
 This schema does not represent pipeline parallelism or separate prefill and
 decode worker pools. Adapters must reject those topologies rather than map them
@@ -201,8 +204,11 @@ validated by the dependency-free Python parsers.
   sequence bound; retained for reference only.
 - `capacity-contract-2.0`: current breaking schema with block/token budgets and
   a context-dependent concurrency envelope.
-- `serving-recipe-1.0`, `load-requirement-1.0`, and `recipe-audit-1.0`: host
-  topology, requested load, and the resulting configuration audit.
+- `serving-recipe-1.0` and `load-requirement-1.0`: host topology and requested
+  load.
+- `recipe-audit-1.0`: historical audit without flow-aware group sizing.
+- `recipe-audit-2.0`: current audit with explicit memory, runtime, llm-d flow,
+  configured-concurrency, and measured limits.
 - `recipe-draft-1.0` and `structural-recipe-audit-1.0`: partial import and
   topology/routing checks before model memory is known.
 - `model-manifest-1.0` and `vllm-initialization-profile-1.0`: pinned static

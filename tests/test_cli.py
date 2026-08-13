@@ -366,8 +366,11 @@ class CliTests(unittest.TestCase):
             )
             self.assertEqual(audit.returncode, 0, audit.stderr)
             audit_document = json.loads(audit.stdout)
+            self.assertEqual(audit_document["schema_version"], "recipe-audit-2.0")
             self.assertEqual(audit_document["status"], "insufficient")
-            self.assertEqual(audit_document["required_groups"], 2)
+            self.assertEqual(audit_document["effective_sequences_per_group"], 2)
+            self.assertEqual(audit_document["required_groups"], 19)
+            self.assertEqual(audit_document["required_devices"], 152)
 
 
 if __name__ == "__main__":

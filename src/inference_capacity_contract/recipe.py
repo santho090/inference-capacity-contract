@@ -11,6 +11,7 @@ from enum import StrEnum
 from math import isclose, isfinite
 from typing import Any
 
+from .arithmetic import block_aligned_sequence_capacity
 from .calculator import capacity_for
 from .models import (
     CapacityContract,
@@ -590,6 +591,8 @@ class RecipeAudit:
     context_supported: bool
     analytical_sequences_per_kv_rank: int
     analytical_sequences_per_group: int
+    sequence_capacity_limits: Mapping[str, int]
+    effective_sequences_per_group: int
     calculated_kv_tokens_per_group: int
     calculated_max_concurrent_sequences: int
     configured_devices: int
@@ -616,6 +619,8 @@ class RecipeAudit:
             "context_supported": self.context_supported,
             "analytical_sequences_per_kv_rank": self.analytical_sequences_per_kv_rank,
             "analytical_sequences_per_group": self.analytical_sequences_per_group,
+            "sequence_capacity_limits": dict(self.sequence_capacity_limits),
+            "effective_sequences_per_group": self.effective_sequences_per_group,
             "calculated_kv_tokens_per_group": self.calculated_kv_tokens_per_group,
             "calculated_max_concurrent_sequences": self.calculated_max_concurrent_sequences,
             "configured_devices": self.configured_devices,
@@ -661,6 +666,31 @@ def audit_recipe(recipe: ServingRecipe, load: LoadRequirement) -> RecipeAudit:
     per_group_sequences = per_rank_sequences * topology.independent_kv_ranks
     kv_tokens_per_group = contract.kv_capacity_tokens_per_device * topology.independent_kv_ranks
     configured_max_sequences = (recipe.runtime.max_num_seqs or 0) * topology.independent_kv_ranks
+    memory_sequences = (
+        block_aligned_sequence_capacity(
+            contract.kv_capacity_tokens_per_device,
+            contract.kv_block_size_tokens,
+            load.context_tokens,
+        )
+        * topology.independent_kv_ranks
+        if context_supported
+        else 0
+    )
+    sequence_limits = {"memory": memory_sequences}
+    if recipe.runtime.max_num_seqs is not None:
+        sequence_limits["runtime"] = configured_max_sequences
+    if llmd.flow_control_token_limit is not None:
+        if llmd.kv_block_size_tokens is None:
+            flow_sequences = llmd.flow_control_token_limit // load.context_tokens
+        else:
+            flow_sequences = block_aligned_sequence_capacity(
+                llmd.flow_control_token_limit,
+                llmd.kv_block_size_tokens,
+                load.context_tokens,
+            )
+        sequence_limits["llmd_flow_control"] = flow_sequences
+    if llmd.max_concurrent_sequences is not None:
+        sequence_limits["llmd_max_concurrency"] = llmd.max_concurrent_sequences
 
     if topology.unused_device_count:
         warnings.append(
@@ -697,18 +727,28 @@ def audit_recipe(recipe: ServingRecipe, load: LoadRequirement) -> RecipeAudit:
 
     drivers: dict[str, int] = {}
     incomplete: list[str] = []
-    if load.peak_concurrent_sequences > 0:
-        analytical_limit = per_group_sequences
-        if usable_profile is not None and usable_profile.concurrent_sequences is not None:
-            analytical_limit = min(analytical_limit, usable_profile.concurrent_sequences)
-        if analytical_limit <= 0:
-            issues.append("the recipe has no sequence capacity at the requested context")
-        else:
-            drivers["peak_concurrent_sequences"] = _groups_for(
-                float(load.peak_concurrent_sequences),
-                float(analytical_limit),
-                load.target_utilization,
-            )
+    if usable_profile is not None and usable_profile.concurrent_sequences is not None:
+        sequence_limits["measured"] = usable_profile.concurrent_sequences
+    effective_sequences = min(sequence_limits.values())
+    needs_sequence_capacity = any(
+        (
+            load.peak_concurrent_sequences,
+            load.request_rate_per_second,
+            load.effective_prefill_tokens_per_second,
+            load.effective_decode_tokens_per_second,
+            load.target_ttft_ms,
+            load.target_tpot_ms,
+        )
+    )
+    cannot_size = needs_sequence_capacity and effective_sequences <= 0
+    if cannot_size:
+        issues.append("the recipe has no sequence capacity at the requested context")
+    elif load.peak_concurrent_sequences > 0:
+        drivers["peak_concurrent_sequences"] = _groups_for(
+            float(load.peak_concurrent_sequences),
+            float(effective_sequences),
+            load.target_utilization,
+        )
 
     measured_drivers = (
         (
@@ -746,7 +786,7 @@ def audit_recipe(recipe: ServingRecipe, load: LoadRequirement) -> RecipeAudit:
         elif observed > target:
             issues.append(f"observed {name} exceeds the requested target")
 
-    required_groups = max(drivers.values(), default=1) if not incomplete else None
+    required_groups = None if incomplete or cannot_size else max(drivers.values(), default=1)
     required_devices = None if required_groups is None else required_groups * topology.physical_device_count
     configured_devices = recipe.configured_groups * topology.physical_device_count
     additional_groups_needed = None if required_groups is None else max(0, required_groups - recipe.configured_groups)
@@ -786,8 +826,8 @@ def audit_recipe(recipe: ServingRecipe, load: LoadRequirement) -> RecipeAudit:
         status = AuditStatus.SUFFICIENT
 
     return RecipeAudit(
-        schema_version="recipe-audit-1.0",
-        formula_version="recipe-audit-formula-1.0",
+        schema_version="recipe-audit-2.0",
+        formula_version="recipe-audit-formula-2.0",
         recipe_variant_fingerprint_version=RECIPE_VARIANT_FINGERPRINT_VERSION,
         recipe_variant_fingerprint=recipe.variant_fingerprint,
         recipe=recipe,
@@ -797,6 +837,8 @@ def audit_recipe(recipe: ServingRecipe, load: LoadRequirement) -> RecipeAudit:
         context_supported=context_supported,
         analytical_sequences_per_kv_rank=per_rank_sequences,
         analytical_sequences_per_group=per_group_sequences,
+        sequence_capacity_limits=sequence_limits,
+        effective_sequences_per_group=effective_sequences,
         calculated_kv_tokens_per_group=kv_tokens_per_group,
         calculated_max_concurrent_sequences=configured_max_sequences,
         configured_devices=configured_devices,

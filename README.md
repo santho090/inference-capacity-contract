@@ -272,6 +272,7 @@ The audit checks:
 
 - whether weights, reserves, and KV cache fit on each KV rank;
 - how many sequences fit at the requested context;
+- whether runtime or llm-d flow control sets the effective sequence limit;
 - how DP ranks combine into group capacity;
 - whether llm-d and the runtime agree on block size, flow-control tokens, and
   concurrency; and
@@ -395,12 +396,12 @@ The historical 1.0 schema remains in `schemas/` for reference. New documents
 must use `schemas/capacity-contract-2.0.schema.json` and scaling recommendations
 use `schemas/scaling-recommendation-2.0.schema.json`.
 
-Version `0.3.0` adds these independent schemas without changing the 2.0
+Version `0.3.0` added these independent schemas without changing the 2.0
 capacity contract:
 
 - `serving-recipe-1.0`;
 - `load-requirement-1.0`; and
-- `recipe-audit-1.0`.
+- `recipe-audit-1.0` (historical) and `recipe-audit-2.0` (current).
 
 These schemas describe normalized output documents produced by `to_dict()`.
 CLI input files may omit nullable/defaulted fields; the dependency-free Python

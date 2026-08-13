@@ -98,7 +98,7 @@ def _tp_recipe(**changes: object) -> ServingRecipe:
             independent_kv_ranks=1,
         ),
         "llmd": LLMDRoutingSpec(
-            flow_control_token_limit=1_000_000,
+            flow_control_token_limit=100_000_000,
             max_concurrent_sequences=24,
             kv_block_size_tokens=256,
             output_ratio=0.2,
@@ -179,6 +179,7 @@ class RecipeAuditTests(unittest.TestCase):
         self.assertEqual(result.status, AuditStatus.SUFFICIENT)
         self.assertTrue(result.context_supported)
         self.assertEqual(result.analytical_sequences_per_group, 24)
+        self.assertEqual(result.effective_sequences_per_group, 24)
         self.assertEqual(result.drivers["peak_concurrent_sequences"], 2)
         self.assertEqual(result.required_groups, 2)
         self.assertEqual(result.required_devices, 16)
@@ -205,7 +206,7 @@ class RecipeAuditTests(unittest.TestCase):
             ),
             topology=topology,
             llmd=LLMDRoutingSpec(
-                flow_control_token_limit=8_000_000,
+                flow_control_token_limit=240_000_000,
                 max_concurrent_sequences=1024,
                 kv_block_size_tokens=256,
                 precise_prefix_routing=True,
@@ -219,8 +220,71 @@ class RecipeAuditTests(unittest.TestCase):
         self.assertEqual(result.status, AuditStatus.SUFFICIENT)
         self.assertEqual(result.analytical_sequences_per_kv_rank, 120)
         self.assertEqual(result.analytical_sequences_per_group, 960)
+        self.assertEqual(result.effective_sequences_per_group, 915)
         self.assertEqual(result.calculated_max_concurrent_sequences, 1024)
         self.assertEqual(result.required_groups, 1)
+
+    def test_flow_control_clamps_full_context_capacity(self) -> None:
+        recipe = _tp_recipe(
+            llmd=LLMDRoutingSpec(
+                flow_control_token_limit=2_104_030,
+                max_concurrent_sequences=24,
+                kv_block_size_tokens=256,
+                precise_prefix_routing=True,
+            ),
+            configured_groups=1,
+        )
+
+        result = audit_recipe(recipe, _load())
+
+        self.assertEqual(result.status, AuditStatus.INSUFFICIENT)
+        self.assertEqual(result.analytical_sequences_per_group, 24)
+        self.assertEqual(
+            result.sequence_capacity_limits,
+            {
+                "memory": 100,
+                "runtime": 24,
+                "llmd_flow_control": 2,
+                "llmd_max_concurrency": 24,
+            },
+        )
+        self.assertEqual(result.effective_sequences_per_group, 2)
+        self.assertEqual(result.drivers["peak_concurrent_sequences"], 19)
+        self.assertEqual(result.required_groups, 19)
+        self.assertEqual(result.required_devices, 152)
+        self.assertEqual(result.additional_groups_needed, 18)
+        self.assertEqual(result.additional_devices_needed, 144)
+
+    def test_zero_flow_capacity_has_no_finite_group_count(self) -> None:
+        recipe = _tp_recipe(
+            llmd=LLMDRoutingSpec(
+                flow_control_token_limit=1_000_000,
+                max_concurrent_sequences=24,
+                kv_block_size_tokens=256,
+                precise_prefix_routing=True,
+            )
+        )
+
+        result = audit_recipe(recipe, _load())
+
+        self.assertEqual(result.status, AuditStatus.INSUFFICIENT)
+        self.assertEqual(result.effective_sequences_per_group, 0)
+        self.assertIsNone(result.required_groups)
+        self.assertIsNone(result.required_devices)
+        self.assertIsNone(result.additional_groups_needed)
+        self.assertIsNone(result.additional_devices_needed)
+
+        traffic_result = audit_recipe(
+            recipe,
+            _load(
+                peak_concurrent_sequences=0,
+                request_rate_per_second=1,
+                input_tokens_per_request=100,
+                measured_profile=_profile(recipe),
+            ),
+        )
+        self.assertEqual(traffic_result.status, AuditStatus.INSUFFICIENT)
+        self.assertIsNone(traffic_result.required_groups)
 
     def test_recipe_rejects_invalid_topology_and_missing_ep_weight_layout(self) -> None:
         with self.assertRaisesRegex(ContractError, "TP x DP"):
@@ -497,7 +561,7 @@ class RecipeAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             recipe.variant_fingerprint,
-            "sha256:2c5697b3c9f5b7687aae92527a360d90a7769ae2a00a04fb364562646b4694bd",
+            "sha256:1d7d6390d1ce583d7a5f6de81eb7ffce3fa018d4ae60d8d47993b66f24331296",
         )
         included = set(recipe._variant_document()) - {"fingerprint_version"}
         excluded = {"schema_version", "recipe_id", "configured_groups", "evidence"}

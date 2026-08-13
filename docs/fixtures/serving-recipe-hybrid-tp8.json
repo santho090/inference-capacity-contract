@@ -46,7 +46,7 @@
     "independent_kv_ranks": 1
   },
   "llmd": {
-    "flow_control_token_limit": 1000000,
+    "flow_control_token_limit": 100000000,
     "max_concurrent_sequences": 24,
     "kv_block_size_tokens": 256,
     "output_ratio": 0.2,

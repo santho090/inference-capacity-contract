@@ -6,9 +6,9 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from math import ceil
 from typing import Any
 
+from .arithmetic import block_aligned_sequence_capacity
 from .models import ContractError, EvidenceKind, EvidenceRecord, HardwareSpec
 from .recipe import ServingRecipe
 
@@ -479,7 +479,7 @@ def audit_recipe_draft(draft: RecipeDraft) -> StructuralRecipeAudit:
         if llmd_block is None:
             full_context = flow // max_model_len
         else:
-            full_context = (flow // llmd_block) // ceil(max_model_len / llmd_block)
+            full_context = block_aligned_sequence_capacity(flow, llmd_block, max_model_len)
     issues: list[str] = []
     warnings = list(draft.warnings)
     suggestions: list[str] = []
