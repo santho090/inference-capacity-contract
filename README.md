@@ -225,7 +225,9 @@ per-device placement override comes from `import_vllm_initialization`.
 
 ## Resolve and measure the exact variant
 
-`resolve_huggingface_manifest` requires a 40-character commit SHA. It reads
+`resolve_huggingface_manifest` accepts a model ID plus an optional branch, tag,
+or commit SHA. It resolves a branch or tag to a 40-character commit SHA before
+reading artifacts, then records only that immutable revision. It reads
 `config.json` plus either the SafeTensors index and each shard header or one
 `model.safetensors` header. Tensor payloads are not downloaded. The normalized
 manifest can be cached and replayed offline. A single-file manifest records
@@ -236,12 +238,10 @@ The optional online CLI follows the same rule:
 
 ```bash
 icc inspect-model \
-  --repo-id example/model \
-  --revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  --repo-id example/model
 
 icc resolve-model \
   --repo-id example/model \
-  --revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   --cache-dir .icc-cache \
   --output model-manifest.json
 
@@ -256,9 +256,12 @@ icc explore \
 field-level provenance, warnings, and unresolved inputs as a versioned JSON
 document. It does not read the SafeTensors index. `resolve-model` stays strict:
 it produces a complete manifest or fails without writing a partial manifest.
-It needs network access for an uncached public model, while repeating the exact
-cached request is offline. Planning from `model-manifest.json` is fully offline.
-Floating revisions such as `main` are rejected.
+Both commands default to `--revision main`; a branch, tag, or commit SHA can be
+provided explicitly. They need network access to resolve a mutable reference.
+An immutable SHA can use an exact cached manifest without network access.
+Planning from `model-manifest.json` is fully offline. The offline
+`import-model-manifest` command still requires a commit SHA because it cannot
+verify a floating reference from caller-fetched files.
 
 For environments that fetch metadata themselves, use
 `import_huggingface_manifest` or the CLI:
@@ -291,9 +294,11 @@ SafeTensors index:
 
 ```bash
 icc inspect-model \
-  --repo-id moonshotai/Kimi-K3 \
-  --revision 9f62e4e9fffbd0a83ddd60e1c209d828994b3569
+  --repo-id moonshotai/Kimi-K3
 ```
+
+The output includes the current immutable revision. Pass that SHA back with
+`--revision` when repeatability matters across runs.
 
 Supply `--parameter-count`, `--kv-bytes-per-token-per-device`, and
 `--resident-weight-bytes` from authoritative model and initialization evidence

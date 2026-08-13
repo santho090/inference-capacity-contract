@@ -17,6 +17,8 @@
 - Lets `explore` and `plan` consume replayable model manifests directly.
 - Adds `icc resolve-model` for optional pinned public-model metadata resolution
   with offline cache replay.
+- Lets online model inspection and resolution accept a branch or tag, default
+  to `main`, and pin it before artifact access or cache lookup.
 - Adds `icc inspect-model` and `model-resolution-draft-1.0` so discovered model
   facts and unresolved manifest inputs are returned as data.
 - Uses revision-bound SafeTensors parameter totals when an unquantized config

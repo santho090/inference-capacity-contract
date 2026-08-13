@@ -22,6 +22,7 @@ from .importers import (
     parse_safetensors_header,
     resolve_huggingface_manifest,
     resolve_huggingface_model_draft,
+    resolve_huggingface_revision,
     tensor_element_count_from_safetensors_headers,
 )
 from .inventory import (
@@ -111,6 +112,7 @@ __all__ = [
     "parse_safetensors_header",
     "resolve_huggingface_manifest",
     "resolve_huggingface_model_draft",
+    "resolve_huggingface_revision",
     "tensor_element_count_from_safetensors_headers",
     "ProviderInstanceSpec",
     "ProviderInventory",

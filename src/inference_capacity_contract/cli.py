@@ -112,10 +112,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     resolve_model = sub.add_parser(
         "resolve-model",
-        help="resolve a pinned public Hugging Face model into a replayable manifest",
+        help="resolve a public Hugging Face model into a pinned, replayable manifest",
     )
     resolve_model.add_argument("--repo-id", required=True)
-    resolve_model.add_argument("--revision", required=True, help="immutable 40-character commit SHA")
+    resolve_model.add_argument("--revision", default="main", help="branch, tag, or commit SHA (default: main)")
     resolve_model.add_argument("--cache-dir")
     resolve_model.add_argument("--kv-bytes-per-token-per-device", type=int)
     resolve_model.add_argument("--parameter-count", type=int)
@@ -130,10 +130,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     inspect_model = sub.add_parser(
         "inspect-model",
-        help="inspect pinned Hugging Face config and report unresolved manifest inputs",
+        help="inspect Hugging Face config and report pinned facts and unresolved inputs",
     )
     inspect_model.add_argument("--repo-id", required=True)
-    inspect_model.add_argument("--revision", required=True, help="immutable 40-character commit SHA")
+    inspect_model.add_argument("--revision", default="main", help="branch, tag, or commit SHA (default: main)")
     inspect_model.add_argument("--kv-bytes-per-token-per-device", type=int)
     inspect_model.add_argument("--parameter-count", type=int)
     inspect_model.add_argument("--resident-weight-bytes", type=int)

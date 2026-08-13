@@ -28,6 +28,7 @@ from inference_capacity_contract import (
     parse_safetensors_header,
     resolve_huggingface_manifest,
     resolve_huggingface_model_draft,
+    resolve_huggingface_revision,
     tensor_element_count_from_safetensors_headers,
 )
 
@@ -72,6 +73,79 @@ def _recipe() -> ServingRecipe:
 
 
 class ModelManifestImporterTests(unittest.TestCase):
+    def test_resolves_model_references_to_immutable_revisions(self) -> None:
+        calls: list[str] = []
+
+        def fetch(url: str) -> dict[str, object]:
+            calls.append(url)
+            return {"id": "example/model", "sha": PINNED_REVISION}
+
+        self.assertEqual(resolve_huggingface_revision("example/model", fetch_json=fetch), PINNED_REVISION)
+        self.assertEqual(
+            calls,
+            ["https://huggingface.co/api/models/example/model/revision/main"],
+        )
+        self.assertEqual(
+            resolve_huggingface_revision(
+                "example/model",
+                PINNED_REVISION.upper(),
+                fetch_json=lambda _: self.fail("an immutable revision reached the network"),
+            ),
+            PINNED_REVISION,
+        )
+
+    def test_rejects_invalid_reference_metadata(self) -> None:
+        cases = (
+            ({"id": "other/model", "sha": PINNED_REVISION}, "requested repository"),
+            ({"id": "example/model", "sha": "not-a-sha"}, "invalid commit SHA"),
+        )
+        for model_info, message in cases:
+            with self.subTest(model_info=model_info):
+                with self.assertRaisesRegex(ContractError, message):
+                    resolve_huggingface_revision(
+                        "example/model",
+                        "release/v1",
+                        fetch_json=lambda _, response=model_info: response,
+                    )
+
+        for reference in (" release", "release/", "release/../main"):
+            with self.subTest(reference=reference):
+                with self.assertRaisesRegex(ContractError, "valid branch"):
+                    resolve_huggingface_revision(
+                        "example/model",
+                        reference,
+                        fetch_json=lambda _: self.fail("invalid reference reached the network"),
+                    )
+
+    def test_model_draft_pins_main_and_reuses_model_metadata(self) -> None:
+        calls: list[str] = []
+
+        def fetch(url: str) -> dict[str, object]:
+            calls.append(url)
+            if "/api/models/" in url:
+                return {
+                    "id": "example/model",
+                    "sha": PINNED_REVISION,
+                    "safetensors": {"total": 1024},
+                }
+            if url.endswith(f"/{PINNED_REVISION}/config.json"):
+                return {
+                    "num_hidden_layers": 2,
+                    "num_key_value_heads": 1,
+                    "num_attention_heads": 2,
+                    "hidden_size": 128,
+                    "max_position_embeddings": 1024,
+                    "torch_dtype": "float16",
+                }
+            self.fail(f"unexpected metadata request: {url}")
+
+        draft = resolve_huggingface_model_draft("example/model", fetch_json=fetch)
+
+        self.assertEqual(draft.revision, PINNED_REVISION)
+        self.assertEqual(draft.field_sources["revision"], "huggingface-api.sha")
+        self.assertEqual(draft.facts["parameter_count"], 1024)
+        self.assertEqual(len(calls), 2)
+
     def test_model_resolution_draft_preserves_discovered_kimi_facts(self) -> None:
         config: dict[str, object] = {
             "architectures": ["KimiK3ForConditionalGeneration"],
@@ -618,6 +692,50 @@ class ModelManifestImporterTests(unittest.TestCase):
                 },
                 inspect_safetensors_headers=False,
             )
+
+    def test_manifest_pins_tag_before_fetching_artifacts_and_caching(self) -> None:
+        calls: list[str] = []
+
+        def fetch(url: str) -> dict[str, object]:
+            calls.append(url)
+            if "/api/models/" in url:
+                return {
+                    "id": "example/model",
+                    "sha": PINNED_REVISION,
+                    "safetensors": {"total": 1024},
+                }
+            if url.endswith(f"/{PINNED_REVISION}/config.json"):
+                return {
+                    "num_hidden_layers": 2,
+                    "num_key_value_heads": 1,
+                    "num_attention_heads": 2,
+                    "hidden_size": 128,
+                    "max_position_embeddings": 1024,
+                    "torch_dtype": "float16",
+                }
+            if url.endswith(f"/{PINNED_REVISION}/model.safetensors.index.json"):
+                return {"metadata": {"total_size": 2048}}
+            self.fail(f"unexpected metadata request: {url}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            manifest = resolve_huggingface_manifest(
+                "example/model",
+                "v1.0",
+                fetch_json=fetch,
+                cache_dir=cache,
+                inspect_safetensors_headers=False,
+            )
+            cache_files = list(cache.iterdir())
+
+        self.assertEqual(manifest.model.revision, PINNED_REVISION)
+        self.assertEqual(manifest.field_sources["revision"], "huggingface-api.sha")
+        self.assertEqual(manifest.evidence[-1].metrics["requested_revision"], "v1.0")
+        self.assertEqual(manifest.evidence[-1].metrics["parameter_count"], 1024)
+        self.assertEqual(len([url for url in calls if "/api/models/" in url]), 1)
+        self.assertEqual(len(cache_files), 1)
+        self.assertIn(PINNED_REVISION, cache_files[0].name)
+        self.assertNotIn("v1.0", cache_files[0].name)
 
     def test_resolver_reads_only_safetensors_header_ranges_for_tensor_metadata(self) -> None:
         header_document = {"weight": {"dtype": "F16", "shape": [10, 20], "data_offsets": [0, 400]}}

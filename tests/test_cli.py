@@ -13,6 +13,36 @@ ROOT = Path(__file__).parents[1]
 
 
 class CliTests(unittest.TestCase):
+    def test_inspect_model_defaults_to_main(self) -> None:
+        draft = inspect_huggingface_config(
+            "example/model",
+            "a" * 40,
+            {
+                "num_hidden_layers": 2,
+                "num_key_value_heads": 1,
+                "num_attention_heads": 2,
+                "hidden_size": 128,
+                "max_position_embeddings": 1024,
+                "torch_dtype": "float16",
+            },
+        )
+        with patch(
+            "inference_capacity_contract.cli.resolve_huggingface_model_draft",
+            return_value=draft,
+        ) as resolver:
+            with patch("sys.stdout"):
+                result = main(["inspect-model", "--repo-id", "example/model"])
+
+        self.assertEqual(result, 0)
+        resolver.assert_called_once_with(
+            "example/model",
+            "main",
+            kv_bytes_per_token_per_device_override=None,
+            parameter_count_override=None,
+            resident_weight_bytes_override=None,
+            weight_dtype_override=None,
+        )
+
     def test_inspect_model_command_writes_unresolved_facts(self) -> None:
         draft = inspect_huggingface_config(
             "example/model",

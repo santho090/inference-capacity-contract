@@ -168,6 +168,13 @@ per-device KV bytes per token. A draft cannot be passed to `explore` or `plan`.
 Missing weight dtype is also unresolved; model resolution never defaults it to
 BF16.
 
+Online model resolution accepts a branch, tag, or commit SHA. A mutable
+reference is resolved through repository metadata first. Config, SafeTensors,
+cache keys, drafts, and manifests then use the returned 40-character commit
+SHA. The model-info response must identify the requested repository when it
+contains an ID, and its SHA must be valid. The offline manifest importer accepts
+only an immutable SHA.
+
 ## Provider planning
 
 `provider-inventory-1.0` records caller-supplied instance shapes. Price and

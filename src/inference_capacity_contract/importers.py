@@ -810,7 +810,16 @@ def _validate_model_resolution_request(
     repo = _required_string("repo_id", repo_id)
     if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) is None:
         raise ContractError("repo_id must be in owner/name form")
-    pinned = _pinned_revision(revision)
+    reference = _required_string("revision", revision)
+    if (
+        len(reference) > 255
+        or reference != reference.strip()
+        or any(ord(character) < 32 for character in reference)
+        or reference.startswith("/")
+        or reference.endswith("/")
+        or any(part in {".", ".."} for part in reference.split("/"))
+    ):
+        raise ContractError("Hugging Face revision must be a valid branch, tag, or commit SHA")
     if kv_bytes_per_token_per_device_override is not None:
         _positive_int(
             "kv_bytes_per_token_per_device_override",
@@ -822,12 +831,61 @@ def _validate_model_resolution_request(
         _positive_int("resident_weight_bytes_override", resident_weight_bytes_override)
     if weight_dtype_override is not None:
         _required_string("weight_dtype_override", weight_dtype_override)
-    return repo, pinned
+    return repo, reference
+
+
+def _model_info_url(repo_id: str, revision: str) -> str:
+    return f"https://huggingface.co/api/models/{quote(repo_id, safe='/')}/revision/{quote(revision, safe='')}"
+
+
+def _validate_model_info(repo_id: str, model_info: Mapping[str, Any]) -> str:
+    returned_id = model_info.get("id")
+    if returned_id is not None and (not isinstance(returned_id, str) or returned_id.casefold() != repo_id.casefold()):
+        raise ContractError("Hugging Face model metadata does not match the requested repository")
+    try:
+        return _pinned_revision(_required_string("Hugging Face model metadata sha", model_info.get("sha")))
+    except ContractError as exc:
+        raise ContractError("Hugging Face model metadata returned an invalid commit SHA") from exc
+
+
+def _resolve_huggingface_reference(
+    repo_id: str,
+    revision: str,
+    fetch: JSONFetcher,
+) -> tuple[str, Mapping[str, Any] | None]:
+    try:
+        return _pinned_revision(revision), None
+    except ContractError:
+        model_info = fetch(_model_info_url(repo_id, revision))
+        return _validate_model_info(repo_id, model_info), model_info
+
+
+def resolve_huggingface_revision(
+    repo_id: str,
+    revision: str = "main",
+    *,
+    fetch_json: JSONFetcher | None = None,
+) -> str:
+    """Resolve a Hugging Face branch, tag, or commit to an immutable commit SHA."""
+
+    repo, reference = _validate_model_resolution_request(repo_id, revision, None, None, None, None)
+    fetch = _fetch_json if fetch_json is None else fetch_json
+    pinned, _ = _resolve_huggingface_reference(repo, reference, fetch)
+    return pinned
+
+
+def _api_parameter_count(repo_id: str, model_info: Mapping[str, Any], pinned: str) -> int:
+    if _validate_model_info(repo_id, model_info) != pinned:
+        raise ContractError("Hugging Face model metadata does not match the pinned revision")
+    safetensors_info = model_info.get("safetensors")
+    if not isinstance(safetensors_info, Mapping):
+        raise ContractError("Hugging Face model metadata is missing SafeTensors parameter totals")
+    return _positive_int("safetensors.total", safetensors_info.get("total"))
 
 
 def resolve_huggingface_model_draft(
     repo_id: str,
-    revision: str,
+    revision: str = "main",
     *,
     fetch_json: JSONFetcher | None = None,
     kv_bytes_per_token_per_device_override: int | None = None,
@@ -837,7 +895,7 @@ def resolve_huggingface_model_draft(
 ) -> ModelResolutionDraft:
     """Resolve config-level facts and return missing manifest inputs as data."""
 
-    repo, pinned = _validate_model_resolution_request(
+    repo, reference = _validate_model_resolution_request(
         repo_id,
         revision,
         kv_bytes_per_token_per_device_override,
@@ -846,19 +904,17 @@ def resolve_huggingface_model_draft(
         weight_dtype_override,
     )
     fetch = _fetch_json if fetch_json is None else fetch_json
+    pinned, model_info = _resolve_huggingface_reference(repo, reference, fetch)
+    resolved_from_reference = model_info is not None
     root = f"https://huggingface.co/{quote(repo, safe='/')}/resolve/{pinned}"
     config = fetch(f"{root}/config.json")
     quantization, _ = _quantization_config(config)
     api_parameter_count: int | None = None
     if parameter_count_override is None and config.get("num_parameters") is None and quantization is None:
-        model_info = fetch(f"https://huggingface.co/api/models/{quote(repo, safe='/')}/revision/{pinned}")
-        if str(model_info.get("sha", "")).lower() != pinned:
-            raise ContractError("Hugging Face model metadata does not match the pinned revision")
-        safetensors_info = model_info.get("safetensors")
-        if not isinstance(safetensors_info, Mapping):
-            raise ContractError("Hugging Face model metadata is missing SafeTensors parameter totals")
-        api_parameter_count = _positive_int("safetensors.total", safetensors_info.get("total"))
-    return inspect_huggingface_config(
+        if model_info is None:
+            model_info = fetch(_model_info_url(repo, pinned))
+        api_parameter_count = _api_parameter_count(repo, model_info, pinned)
+    draft = inspect_huggingface_config(
         repo,
         pinned,
         config,
@@ -868,11 +924,16 @@ def resolve_huggingface_model_draft(
         weight_dtype_override=weight_dtype_override,
         api_parameter_count=api_parameter_count,
     )
+    if resolved_from_reference:
+        field_sources = dict(draft.field_sources)
+        field_sources["revision"] = "huggingface-api.sha"
+        draft = replace(draft, field_sources=field_sources)
+    return draft
 
 
 def resolve_huggingface_manifest(
     repo_id: str,
-    revision: str,
+    revision: str = "main",
     *,
     fetch_json: JSONFetcher | None = None,
     fetch_range: RangeFetcher | None = None,
@@ -883,9 +944,9 @@ def resolve_huggingface_manifest(
     weight_dtype_override: str | None = None,
     inspect_safetensors_headers: bool = True,
 ) -> ModelManifest:
-    """Resolve pinned metadata without downloading model weight shards."""
+    """Resolve a model reference into pinned metadata without downloading weight shards."""
 
-    repo, pinned = _validate_model_resolution_request(
+    repo, reference = _validate_model_resolution_request(
         repo_id,
         revision,
         kv_bytes_per_token_per_device_override,
@@ -893,6 +954,9 @@ def resolve_huggingface_manifest(
         resident_weight_bytes_override,
         weight_dtype_override,
     )
+    fetch = _fetch_json if fetch_json is None else fetch_json
+    pinned, model_info = _resolve_huggingface_reference(repo, reference, fetch)
+    resolved_from_reference = model_info is not None
     cache_path = None
     if cache_dir is not None:
         cache_inputs = {
@@ -914,7 +978,6 @@ def resolve_huggingface_manifest(
             if cached.model.model_id != repo or cached.model.revision != pinned:
                 raise ContractError("cached model manifest identity does not match its cache key")
             return cached
-    fetch = _fetch_json if fetch_json is None else fetch_json
     root = f"https://huggingface.co/{quote(repo, safe='/')}/resolve/{pinned}"
     config = fetch(f"{root}/config.json")
     resolved_parameter_count = parameter_count_override
@@ -922,13 +985,9 @@ def resolve_huggingface_manifest(
     quantization, _ = _quantization_config(config)
     if resolved_parameter_count is None and config.get("num_parameters") is None:
         if quantization is None:
-            model_info = fetch(f"https://huggingface.co/api/models/{quote(repo, safe='/')}/revision/{pinned}")
-            if str(model_info.get("sha", "")).lower() != pinned:
-                raise ContractError("Hugging Face model metadata does not match the pinned revision")
-            safetensors_info = model_info.get("safetensors")
-            if not isinstance(safetensors_info, Mapping):
-                raise ContractError("Hugging Face model metadata is missing SafeTensors parameter totals")
-            api_parameter_count = _positive_int("safetensors.total", safetensors_info.get("total"))
+            if model_info is None:
+                model_info = fetch(_model_info_url(repo, pinned))
+            api_parameter_count = _api_parameter_count(repo, model_info, pinned)
             resolved_parameter_count = api_parameter_count
     draft = inspect_huggingface_config(
         repo,
@@ -986,22 +1045,31 @@ def resolve_huggingface_manifest(
     )
     field_sources = dict(manifest.field_sources)
     evidence = manifest.evidence
+    if resolved_from_reference:
+        field_sources["revision"] = "huggingface-api.sha"
     if single_file:
         field_sources["artifact_bytes"] = "model.safetensors.header.data_offsets"
         evidence = tuple(replace(item, scope="config.json and model.safetensors header metadata") for item in evidence)
+    if model_info is not None:
+        metrics: dict[str, float | int | str] = {"revision": pinned}
+        if resolved_from_reference:
+            metrics["requested_revision"] = reference
+        if api_parameter_count is not None:
+            metrics["parameter_count"] = api_parameter_count
     if api_parameter_count is not None:
         field_sources["parameter_count"] = "huggingface-api.safetensors.total"
+    if model_info is not None:
         evidence = (
             *evidence,
             EvidenceRecord(
                 evidence_id=f"hf-model-info-{pinned}",
                 kind=EvidenceKind.REPORTED,
-                source=f"https://huggingface.co/api/models/{repo}/revision/{pinned}",
-                scope="pinned model metadata",
-                metrics={"revision": pinned, "parameter_count": api_parameter_count},
+                source=_model_info_url(repo, reference if resolved_from_reference else pinned),
+                scope="model reference resolution and pinned metadata",
+                metrics=metrics,
             ),
         )
-    if single_file or api_parameter_count is not None:
+    if single_file or model_info is not None:
         manifest = replace(manifest, field_sources=field_sources, evidence=evidence)
     if cache_path is not None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
