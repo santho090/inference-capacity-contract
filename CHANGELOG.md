@@ -10,6 +10,10 @@
   memory budget.
 - Adds `vllm-initialization-profile-2.0` with context-specific sequence
   capacity, `max_num_seqs`, and a canonical evidence digest.
+- Adds `vllm-runtime-snapshot-1.0` and `icc import-vllm-snapshot` for exact
+  worker memory and group-aware scheduler capacity.
+- Preserves vLLM's exact requested byte budget instead of rejecting the
+  one-byte difference between its ceiling and conservative analytical floor.
 - Keeps runtime-specific hybrid KV facts out of static model manifests.
 - Makes Kimi K3 model inspection require only unresolved model facts; runtime
   capacity is supplied later by the matching runtime inventory.
@@ -20,6 +24,7 @@
 - Versions llm-d and scaling-policy adapter payloads as 3.0.
 - Retains the 2.0 capacity contract and 1.0 initialization profile as
   historical schemas.
+- Ships every JSON Schema in the wheel and exposes a schema-loading API.
 
 ## 0.5.0
 

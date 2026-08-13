@@ -139,6 +139,7 @@ class InputValidationTests(unittest.TestCase):
             {"kv_cache_dtype": "unknown"},
             {"supported_vendors": ()},
             {"weight_bytes_per_device_override": 0},
+            {"memory_budget_bytes_per_device_override": 0},
         )
         for changes in invalid_runtime_changes:
             with self.subTest(runtime=changes), self.assertRaises(ContractError):

@@ -72,6 +72,7 @@ class SchemaTests(unittest.TestCase):
         self.manifest_schema = _read_schema("model-manifest-1.0.schema.json")
         self.model_resolution_schema = _read_schema("model-resolution-draft-1.0.schema.json")
         self.initialization_schema = _read_schema("vllm-initialization-profile-2.0.schema.json")
+        self.runtime_snapshot_schema = _read_schema("vllm-runtime-snapshot-1.0.schema.json")
         self.legacy_initialization_schema = _read_schema("vllm-initialization-profile-1.0.schema.json")
         self.provider_inventory_schema = _read_schema("provider-inventory-1.0.schema.json")
         self.runtime_inventory_schema = _read_schema("runtime-inventory-1.0.schema.json")
@@ -90,6 +91,7 @@ class SchemaTests(unittest.TestCase):
         Draft202012Validator.check_schema(self.manifest_schema)
         Draft202012Validator.check_schema(self.model_resolution_schema)
         Draft202012Validator.check_schema(self.initialization_schema)
+        Draft202012Validator.check_schema(self.runtime_snapshot_schema)
         Draft202012Validator.check_schema(self.legacy_initialization_schema)
         Draft202012Validator.check_schema(self.provider_inventory_schema)
         Draft202012Validator.check_schema(self.runtime_inventory_schema)
@@ -104,6 +106,9 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(load_schema("capacity-contract-3.0"), self.capacity_schema)
         with self.assertRaisesRegex(ValueError, "unknown schema version"):
             load_schema("../capacity-contract-3.0")
+
+    def test_vllm_runtime_snapshot_fixture_validates(self) -> None:
+        Draft202012Validator(self.runtime_snapshot_schema).validate(_read_fixture("vllm-runtime-snapshot.json"))
 
     def test_model_planning_result_document_validates(self) -> None:
         providers = ProviderInventory.from_dict(_read_fixture("provider-inventory.json"))

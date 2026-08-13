@@ -493,6 +493,27 @@ class CliTests(unittest.TestCase):
                 "vllm-initialization-profile-2.0",
             )
 
+            snapshot_import = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "inference_capacity_contract",
+                    "import-vllm-snapshot",
+                    "--input",
+                    str(ROOT / "docs" / "fixtures" / "vllm-runtime-snapshot.json"),
+                    "--source",
+                    "benchmark://cli-runtime-snapshot",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(snapshot_import.returncode, 0, snapshot_import.stderr)
+            snapshot_profile = json.loads(snapshot_import.stdout)
+            self.assertEqual(snapshot_profile["kv_capacity_envelope"][0]["max_sequences"], 24)
+            self.assertEqual(snapshot_profile["evidence"]["metrics"]["limiting_worker_rank"], 0)
+
             config = directory_path / "config.json"
             index = directory_path / "model.safetensors.index.json"
             config.write_text(
@@ -566,9 +587,9 @@ class CliTests(unittest.TestCase):
                     str(manifest),
                 ],
                 [
-                    "import-vllm-init",
+                    "import-vllm-snapshot",
                     "--input",
-                    str(fixtures / "vllm-initialization.json"),
+                    str(fixtures / "vllm-runtime-snapshot.json"),
                     "--source",
                     "benchmark://cli-initialization",
                     "--output",
@@ -601,6 +622,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(recipe_document["model"]["model_id"], "example/long-context-moe")
             self.assertEqual(recipe_document["model"]["max_model_len"], 1_048_576)
             self.assertEqual(recipe_document["runtime"]["weight_bytes_per_device_override"], 60 * 1024**3)
+            self.assertEqual(recipe_document["runtime"]["memory_budget_bytes_per_device_override"], 296868139500)
 
             audit = subprocess.run(
                 [

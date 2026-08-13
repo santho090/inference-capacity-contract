@@ -129,6 +129,7 @@
       "required": [
         "engine", "version", "tensor_parallel_size", "kv_cache_dtype",
         "kv_heads_per_device", "weight_bytes_per_device_override",
+        "memory_budget_bytes_per_device_override",
         "runtime_overhead_bytes_per_device", "activation_reserve_bytes_per_device",
         "max_num_seqs", "block_size_tokens", "kv_capacity_hardware_id",
         "kv_capacity_memory_bytes_per_device", "kv_capacity_envelope_override",
@@ -141,6 +142,7 @@
         "kv_cache_dtype": {"enum": ["bf16", "fp16", "fp8", "int8", "int4"]},
         "kv_heads_per_device": {"type": ["integer", "null"], "minimum": 1},
         "weight_bytes_per_device_override": {"type": ["integer", "null"], "minimum": 1},
+        "memory_budget_bytes_per_device_override": {"type": ["integer", "null"], "minimum": 1},
         "runtime_overhead_bytes_per_device": {"type": "integer", "minimum": 0},
         "activation_reserve_bytes_per_device": {"type": "integer", "minimum": 0},
         "max_num_seqs": {"type": ["integer", "null"], "minimum": 1},

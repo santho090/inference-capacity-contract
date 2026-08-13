@@ -20,7 +20,8 @@ The result is a versioned JSON contract with:
 - partial llm-d recipe imports that preserve unresolved facts;
 - pinned Hugging Face metadata manifests with field-level provenance;
 - SafeTensors header inspection without downloading tensor payloads;
-- vLLM initialization and benchmark evidence import; and
+- a versioned adapter for exact vLLM worker and scheduler snapshots;
+- vLLM initialization and benchmark evidence import;
 - a direct answer for whether a configured recipe can handle the requested
   context and load;
 - provider-instance exploration for one model and context; and
@@ -76,7 +77,8 @@ installed separately with `python -m pip install -e '.[dev]'`.
 | What model facts are available before a manifest is complete? | `resolve_huggingface_model_draft` | `icc inspect-model` |
 | How do I pin model metadata without downloading weights? | `resolve_huggingface_manifest` | `icc resolve-model` or `icc import-model-manifest` |
 | How do I complete a draft after initialization? | `materialize_recipe_draft` | `icc materialize-recipe` |
-| How do I bind vLLM measurements to a recipe? | importer functions | `icc import-vllm-init`, `icc import-vllm-benchmark` |
+| How do I convert exact vLLM initialization values? | `import_vllm_runtime_snapshot` | `icc import-vllm-snapshot` |
+| How do I bind normalized vLLM measurements to a recipe? | importer functions | `icc import-vllm-init`, `icc import-vllm-benchmark` |
 | Is an existing capacity document valid? | `CapacityContract.from_dict` | `icc validate` |
 | How do I pass a contract to another planner? | adapter functions | `icc export` |
 
@@ -362,8 +364,8 @@ benchmark has completed, bind its counters and latency percentile to the exact
 recipe fingerprint:
 
 ```bash
-icc import-vllm-init \
-  --input docs/fixtures/vllm-initialization.json \
+icc import-vllm-snapshot \
+  --input docs/fixtures/vllm-runtime-snapshot.json \
   --source benchmark://initialization-run \
   --output initialization.json
 
@@ -386,6 +388,8 @@ icc import-vllm-benchmark \
 See [capturing a vLLM initialization profile](docs/vllm-initialization.md) for
 the exact worker values and group-aware KV result to export. Use raw byte
 values; rounded GiB log lines are not exact enough for evidence binding.
+Use `icc import-vllm-init` instead when another adapter already provides the
+normalized initialization fields.
 
 `materialize-recipe` is the evidence gate between configuration inspection and
 a complete serving recipe. It rejects a different model identity or revision,
@@ -594,10 +598,10 @@ parsers enforce their input contracts directly.
 ## Roadmap
 
 The single-model analytical planner is available. The next milestones are
-versioned runtime adapters, real initialization and serving validation across
-NVIDIA and AMD paths, prediction-error reporting, an SGLang adapter, optional
-provider catalog importers, and then multi-model portfolio planning. See
-[the detailed roadmap](docs/roadmap.md).
+real initialization and serving validation across NVIDIA and AMD paths,
+prediction-error reporting, an SGLang adapter, optional provider catalog
+importers, and then multi-model portfolio planning. See [the detailed
+roadmap](docs/roadmap.md).
 
 HTTP service and autoscaler integration remain deferred until the library's
 predictions are validated against real deployments.

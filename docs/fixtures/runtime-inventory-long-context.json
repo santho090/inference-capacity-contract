@@ -10,6 +10,7 @@
         "kv_cache_dtype": "fp8",
         "kv_heads_per_device": null,
         "weight_bytes_per_device_override": 64424509440,
+        "memory_budget_bytes_per_device_override": null,
         "runtime_overhead_bytes_per_device": 2147483648,
         "activation_reserve_bytes_per_device": 4294967296,
         "max_num_seqs": 24,

@@ -27,6 +27,7 @@ from .planner import PlanningObjective, explore
 from .planner import plan as plan_providers
 from .recipe import LoadRequirement, ServingRecipe, audit_recipe
 from .scaling import recommend_scale
+from .vllm_adapter import import_vllm_runtime_snapshot
 from .workflows import plan_huggingface_model
 
 
@@ -157,6 +158,14 @@ def build_parser() -> argparse.ArgumentParser:
     initialization.add_argument("--input", required=True)
     initialization.add_argument("--source", required=True)
     initialization.add_argument("--output")
+
+    runtime_snapshot = sub.add_parser(
+        "import-vllm-snapshot",
+        help="convert exact vLLM worker and scheduler values into initialization evidence",
+    )
+    runtime_snapshot.add_argument("--input", required=True)
+    runtime_snapshot.add_argument("--source", required=True)
+    runtime_snapshot.add_argument("--output")
 
     materialize = sub.add_parser(
         "materialize-recipe",
@@ -327,6 +336,8 @@ def main(argv: list[str] | None = None) -> int:
             _write(model_draft.to_dict(), args.output)
         elif args.command == "import-vllm-init":
             _write(import_vllm_initialization(_read(args.input), source=args.source).to_dict(), args.output)
+        elif args.command == "import-vllm-snapshot":
+            _write(import_vllm_runtime_snapshot(_read(args.input), source=args.source).to_dict(), args.output)
         elif args.command == "materialize-recipe":
             recipe = materialize_recipe_draft(
                 RecipeDraft.from_dict(_read(args.draft)),

@@ -71,6 +71,7 @@ from .recipe import (
 )
 from .scaling import ScalingRecommendation, recommend_scale
 from .schema_catalog import available_schema_versions, load_schema
+from .vllm_adapter import SNAPSHOT_SCHEMA_VERSION, import_vllm_runtime_snapshot
 from .workflows import ModelPlanningResult, ModelPlanningStatus, plan_huggingface_model
 
 __all__ = [
@@ -140,4 +141,6 @@ __all__ = [
     "ModelPlanningResult",
     "ModelPlanningStatus",
     "plan_huggingface_model",
+    "SNAPSHOT_SCHEMA_VERSION",
+    "import_vllm_runtime_snapshot",
 ]

@@ -1114,6 +1114,15 @@ class VLLMInitializationProfile:
     kv_capacity_envelope: tuple[RuntimeKVCapacityPoint, ...]
     evidence: EvidenceRecord
 
+    @property
+    def memory_budget_bytes_per_device(self) -> int:
+        return (
+            self.weight_bytes_per_device
+            + self.runtime_overhead_bytes_per_device
+            + self.activation_reserve_bytes_per_device
+            + self.kv_capacity_memory_bytes_per_device
+        )
+
     def __post_init__(self) -> None:
         if self.schema_version != "vllm-initialization-profile-2.0":
             raise ContractError("unsupported vLLM initialization profile schema_version")
@@ -1366,6 +1375,7 @@ def materialize_recipe_draft(
         },
         "runtime": {
             "weight_bytes_per_device_override": initialization.weight_bytes_per_device,
+            "memory_budget_bytes_per_device_override": initialization.memory_budget_bytes_per_device,
             "runtime_overhead_bytes_per_device": initialization.runtime_overhead_bytes_per_device,
             "activation_reserve_bytes_per_device": initialization.activation_reserve_bytes_per_device,
             "kv_capacity_hardware_id": initialization.hardware_id,

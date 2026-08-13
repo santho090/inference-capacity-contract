@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santho090.github.io/inference-capacity-contract/schemas/vllm-runtime-snapshot-1.0.schema.json",
+  "title": "vLLM runtime snapshot",
+  "type": "object",
+  "required": [
+    "schema_version", "model_revision", "hardware_id", "runtime_version",
+    "tensor_parallel_size", "data_parallel_size", "expert_parallel_size",
+    "physical_device_count", "memory_utilization_limit", "kv_cache_dtype",
+    "block_size_tokens", "max_num_seqs", "context_tokens",
+    "kv_cache_size_tokens", "kv_cache_max_concurrency", "workers"
+  ],
+  "properties": {
+    "schema_version": {"const": "vllm-runtime-snapshot-1.0"},
+    "model_revision": {"type": "string", "minLength": 1},
+    "hardware_id": {"type": "string", "minLength": 1},
+    "runtime_version": {"type": "string", "minLength": 1},
+    "tensor_parallel_size": {"type": "integer", "minimum": 1},
+    "data_parallel_size": {"type": "integer", "minimum": 1},
+    "expert_parallel_size": {"type": "integer", "minimum": 1},
+    "physical_device_count": {"type": "integer", "minimum": 1},
+    "memory_utilization_limit": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+    "kv_cache_dtype": {"enum": ["bf16", "fp16", "fp8", "int8", "int4"]},
+    "block_size_tokens": {"type": "integer", "minimum": 1},
+    "max_num_seqs": {"type": "integer", "minimum": 1},
+    "context_tokens": {"type": "integer", "minimum": 1},
+    "kv_cache_size_tokens": {"type": "integer", "minimum": 1},
+    "kv_cache_max_concurrency": {"type": "number", "exclusiveMinimum": 0},
+    "workers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/worker"}
+    }
+  },
+  "$defs": {
+    "worker": {
+      "type": "object",
+      "required": [
+        "worker_rank", "device_memory_bytes", "requested_memory_bytes", "model_memory_usage_bytes",
+        "peak_activation_memory_bytes", "available_kv_cache_memory_bytes"
+      ],
+      "properties": {
+        "worker_rank": {"type": "integer", "minimum": 0},
+        "device_memory_bytes": {"type": "integer", "minimum": 1},
+        "requested_memory_bytes": {"type": "integer", "minimum": 1},
+        "model_memory_usage_bytes": {"type": "integer", "minimum": 1},
+        "peak_activation_memory_bytes": {"type": "integer", "minimum": 0},
+        "available_kv_cache_memory_bytes": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

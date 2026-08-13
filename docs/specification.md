@@ -303,6 +303,23 @@ block size, and runtime concurrency limit must also match the draft. One
 measured evidence record binds the identity and memory metrics plus a canonical
 digest of the capacity envelope.
 
+`vllm-runtime-snapshot-1.0` is the raw adapter boundary for current vLLM. It
+accepts one exact memory ledger per TP x DP worker plus the group-aware KV token
+capacity and maximum concurrency from the final scheduler configuration. Every
+worker must have the same device size and requested memory budget because the
+normalized profile has one per-device budget. Each requested budget must equal
+the ceiling of device memory times the configured utilization. The adapter uses
+the worker with the least available KV memory as the limiting ledger, derives
+its runtime overhead, caps whole-sequence capacity at `max_num_seqs`, and binds
+a digest of the snapshot to the evidence record.
+
+Initialization-backed runtime contracts carry that exact requested byte budget
+as `memory_budget_bytes_per_device_override`. This handles vLLM's ceiling
+rounding without changing the conservative floor used by analytical contracts.
+Materialization accepts only the floor or ceiling of device memory times the
+configured utilization, so arbitrary memory ledgers cannot bypass the recipe
+identity check.
+
 The vLLM benchmark importer derives RPS, average request shape, prefill TPS, and
 decode TPS from completed requests, duration, and total token counters. This
 keeps all rates arithmetically consistent. It binds those fields and the exact
@@ -333,6 +350,7 @@ validated by the dependency-free Python parsers.
 - `vllm-initialization-profile-1.0`: historical scalar KV profile.
 - `vllm-initialization-profile-2.0`: current measured runtime memory and exact
   context-capacity profile.
+- `vllm-runtime-snapshot-1.0`: exact vLLM worker and scheduler adapter input.
 - `provider-inventory-1.0`, `runtime-inventory-1.0`, and
   `measurement-inventory-1.0`: caller-supplied planning inputs.
 - `capacity-exploration-1.0` and `capacity-plan-1.0`: ranked single-model

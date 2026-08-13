@@ -41,6 +41,7 @@ jobs:
           /tmp/icc-venv/bin/icc inspect-model --help
           /tmp/icc-venv/bin/icc resolve-model --help
           /tmp/icc-venv/bin/icc plan-model --help
+          /tmp/icc-venv/bin/icc import-vllm-snapshot --help
           /tmp/icc-venv/bin/icc plan \
             --model docs/fixtures/model-7b.json \
             --hardware docs/fixtures/hardware-h100.json \
@@ -62,6 +63,10 @@ jobs:
             --input docs/fixtures/vllm-initialization.json \
             --source benchmark://ci-initialization \
             --output /tmp/icc-initialization.json
+          /tmp/icc-venv/bin/icc import-vllm-snapshot \
+            --input docs/fixtures/vllm-runtime-snapshot.json \
+            --source benchmark://ci-runtime-snapshot \
+            --output /tmp/icc-snapshot-initialization.json
           /tmp/icc-venv/bin/icc import-model-manifest \
             --repo-id example/long-context-moe \
             --revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
@@ -71,7 +76,7 @@ jobs:
           /tmp/icc-venv/bin/icc materialize-recipe \
             --draft /tmp/icc-draft.json \
             --manifest /tmp/icc-manifest.json \
-            --initialization /tmp/icc-initialization.json \
+            --initialization /tmp/icc-snapshot-initialization.json \
             --precise-prefix-routing \
             --output /tmp/icc-materialized-recipe.json
           /tmp/icc-venv/bin/icc audit \

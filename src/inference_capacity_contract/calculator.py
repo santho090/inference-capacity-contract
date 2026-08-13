@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from .arithmetic import ceil_div, sequence_capacity, usable_memory_bytes
+from .arithmetic import ceil_div, sequence_capacity
 from .models import (
     DTYPE_BITS,
     CapacityContract,
@@ -89,7 +89,7 @@ def capacity_for(
             f"tensor_parallel_size={runtime.tensor_parallel_size}"
         )
 
-    usable_bytes = usable_memory_bytes(hardware.memory_bytes_per_device, hardware.memory_utilization_limit)
+    usable_bytes = runtime.memory_budget_bytes(hardware)
     if runtime.weight_bytes_per_device_override is not None:
         weights_per_device = runtime.weight_bytes_per_device_override
         assumptions.append("Per-device resident weight bytes use the explicit runtime override.")

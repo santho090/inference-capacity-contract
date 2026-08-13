@@ -64,7 +64,7 @@ directly, and the CLI can optionally resolve a pinned public model before
 planning offline.
 
 - accept normalized user-supplied provider inventories;
-- add a versioned vLLM runtime adapter;
+- [x] add a versioned vLLM runtime adapter;
 - expose `explore` and `plan` over the same candidate evaluator;
 - [x] add a one-call public-model-to-provider planning workflow;
 - return ranked plans, rejected-candidate reasons, uncertainty, and resource

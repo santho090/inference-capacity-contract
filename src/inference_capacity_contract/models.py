@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from math import isfinite
+from math import ceil, isfinite
 from typing import Any
 
 from .arithmetic import ceil_div, sequence_capacity, usable_memory_bytes
@@ -295,6 +295,7 @@ class RuntimeVariant:
     kv_cache_dtype: str = "bf16"
     kv_heads_per_device: int | None = None
     weight_bytes_per_device_override: int | None = None
+    memory_budget_bytes_per_device_override: int | None = None
     runtime_overhead_bytes_per_device: int = 0
     activation_reserve_bytes_per_device: int = 0
     max_num_seqs: int | None = None
@@ -318,6 +319,14 @@ class RuntimeVariant:
             _positive(
                 "weight_bytes_per_device_override",
                 _required_int("weight_bytes_per_device_override", self.weight_bytes_per_device_override),
+            )
+        if self.memory_budget_bytes_per_device_override is not None:
+            _positive(
+                "memory_budget_bytes_per_device_override",
+                _required_int(
+                    "memory_budget_bytes_per_device_override",
+                    self.memory_budget_bytes_per_device_override,
+                ),
             )
         for name in (
             "runtime_overhead_bytes_per_device",
@@ -371,6 +380,19 @@ class RuntimeVariant:
     def devices_required(self) -> int:
         return self.tensor_parallel_size
 
+    def memory_budget_bytes(self, hardware: HardwareSpec) -> int:
+        """Return the exact runtime budget when supplied, else the safe analytical budget."""
+
+        if self.memory_budget_bytes_per_device_override is None:
+            return usable_memory_bytes(hardware.memory_bytes_per_device, hardware.memory_utilization_limit)
+        valid_budgets = {
+            usable_memory_bytes(hardware.memory_bytes_per_device, hardware.memory_utilization_limit),
+            ceil(hardware.memory_bytes_per_device * hardware.memory_utilization_limit),
+        }
+        if self.memory_budget_bytes_per_device_override not in valid_budgets:
+            raise ContractError("runtime memory budget does not match device memory and utilization")
+        return self.memory_budget_bytes_per_device_override
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "engine": self.engine,
@@ -379,6 +401,7 @@ class RuntimeVariant:
             "kv_cache_dtype": self.kv_cache_dtype,
             "kv_heads_per_device": self.kv_heads_per_device,
             "weight_bytes_per_device_override": self.weight_bytes_per_device_override,
+            "memory_budget_bytes_per_device_override": self.memory_budget_bytes_per_device_override,
             "runtime_overhead_bytes_per_device": self.runtime_overhead_bytes_per_device,
             "activation_reserve_bytes_per_device": self.activation_reserve_bytes_per_device,
             "max_num_seqs": self.max_num_seqs,
@@ -412,6 +435,10 @@ class RuntimeVariant:
             kv_heads_per_device=_optional_int("kv_heads_per_device", data.get("kv_heads_per_device")),
             weight_bytes_per_device_override=_optional_int(
                 "weight_bytes_per_device_override", data.get("weight_bytes_per_device_override")
+            ),
+            memory_budget_bytes_per_device_override=_optional_int(
+                "memory_budget_bytes_per_device_override",
+                data.get("memory_budget_bytes_per_device_override"),
             ),
             runtime_overhead_bytes_per_device=_required_int(
                 "runtime_overhead_bytes_per_device", data.get("runtime_overhead_bytes_per_device", 0)
@@ -770,10 +797,7 @@ class CapacityContract:
         ):
             raise ContractError("memory_bytes_per_device values must be non-negative integers")
 
-        expected_usable = usable_memory_bytes(
-            self.hardware.memory_bytes_per_device,
-            self.hardware.memory_utilization_limit,
-        )
+        expected_usable = self.runtime.memory_budget_bytes(self.hardware)
         expected_weights = (
             self.runtime.weight_bytes_per_device_override
             if self.runtime.weight_bytes_per_device_override is not None

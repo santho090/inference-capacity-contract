@@ -258,6 +258,8 @@ class ServingRecipe:
         runtime = self.runtime.to_dict()
         runtime.pop("notes")
         runtime.pop("supported_vendors")
+        if runtime["memory_budget_bytes_per_device_override"] is None:
+            runtime.pop("memory_budget_bytes_per_device_override")
         llmd = self.llmd.to_dict()
         if llmd["output_ratio"] is not None:
             llmd["output_ratio"] = float(llmd["output_ratio"])

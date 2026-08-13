@@ -79,6 +79,26 @@ class CalculatorTests(unittest.TestCase):
         self.assertEqual(contract.max_sequences_at(8192), 55)
         self.assertNotIn("runtime overhead reserve is zero", " ".join(contract.warnings))
 
+    def test_exact_runtime_memory_budget_overrides_analytical_rounding(self) -> None:
+        hardware = HardwareSpec("small-gpu", "nvidia", 1, 10_001, memory_utilization_limit=0.5)
+        exact_runtime = runtime(
+            memory_budget_bytes_per_device_override=5_001,
+            runtime_overhead_bytes_per_device=1,
+            activation_reserve_bytes_per_device=1,
+        )
+        model = model_7b(parameter_count=1, num_layers=1, num_kv_heads=1, head_dim=1, max_model_len=16)
+
+        contract = capacity_for(model, hardware, exact_runtime)
+
+        self.assertEqual(contract.memory_bytes_per_device["usable_budget"], 5_001)
+        self.assertEqual(CapacityContract.from_dict(contract.to_dict()), contract)
+        with self.assertRaisesRegex(ContractError, "does not match device memory"):
+            capacity_for(
+                model,
+                hardware,
+                replace(exact_runtime, memory_budget_bytes_per_device_override=10_002),
+            )
+
     def test_concurrency_envelope_never_exceeds_kv_token_budget(self) -> None:
         contract = capacity_for(
             model_7b(),

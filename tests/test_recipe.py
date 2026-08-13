@@ -598,7 +598,16 @@ class RecipeAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             {field.name for field in fields(RuntimeVariant)},
-            set(document["runtime"]) | {"notes", "supported_vendors"},
+            set(document["runtime"]) | {"notes", "supported_vendors", "memory_budget_bytes_per_device_override"},
+        )
+        self.assertNotEqual(
+            recipe.variant_fingerprint,
+            replace(
+                recipe,
+                runtime=replace(
+                    recipe.runtime, memory_budget_bytes_per_device_override=recipe.host.memory_bytes_per_device
+                ),
+            ).variant_fingerprint,
         )
 
     def test_round_trip_is_strict_and_stable(self) -> None:
