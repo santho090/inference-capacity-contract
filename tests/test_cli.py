@@ -9,6 +9,86 @@ ROOT = Path(__file__).parents[1]
 
 
 class CliTests(unittest.TestCase):
+    def test_explore_and_plan_across_provider_inventory(self) -> None:
+        fixtures = ROOT / "docs" / "fixtures"
+        explore_result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "inference_capacity_contract",
+                "explore",
+                "--model",
+                str(fixtures / "model-7b.json"),
+                "--providers",
+                str(fixtures / "provider-inventory.json"),
+                "--runtimes",
+                str(fixtures / "runtime-inventory.json"),
+                "--context-tokens",
+                "8192",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(explore_result.returncode, 0, explore_result.stderr)
+        exploration = json.loads(explore_result.stdout)
+        self.assertEqual(exploration["schema_version"], "capacity-exploration-1.0")
+        self.assertEqual(exploration["candidates"][0]["sequences_per_instance"], 1024)
+
+        plan_result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "inference_capacity_contract",
+                "plan-providers",
+                "--model",
+                str(fixtures / "model-7b.json"),
+                "--providers",
+                str(fixtures / "provider-inventory.json"),
+                "--runtimes",
+                str(fixtures / "runtime-inventory.json"),
+                "--load",
+                str(fixtures / "load-provider-plan.json"),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+        capacity_plan = json.loads(plan_result.stdout)
+        self.assertEqual(capacity_plan["schema_version"], "capacity-plan-1.0")
+        self.assertEqual(capacity_plan["candidates"][0]["hourly_cost"], 20.0)
+        self.assertEqual(capacity_plan["candidates"][0]["resource_claim"]["allocated_devices"], 5)
+
+        long_context = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "inference_capacity_contract",
+                "plan-providers",
+                "--model",
+                str(fixtures / "model-long-context-moe.json"),
+                "--providers",
+                str(fixtures / "provider-inventory-long-context.json"),
+                "--runtimes",
+                str(fixtures / "runtime-inventory-long-context.json"),
+                "--load",
+                str(fixtures / "load-context-concurrency.json"),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(long_context.returncode, 0, long_context.stderr)
+        long_context_plan = json.loads(long_context.stdout)
+        candidate = long_context_plan["candidates"][0]
+        self.assertEqual(candidate["audit"]["sequence_capacity_limits"]["llmd_flow_control"], 2)
+        self.assertEqual(candidate["resource_claim"]["required_instances"], 19)
+        self.assertEqual(candidate["resource_claim"]["serving_devices"], 152)
+
     def test_plan_validate_and_export(self) -> None:
         gib = 1024**3
         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,21 @@
+{
+  "schema_version": "provider-inventory-1.0",
+  "items": [
+    {
+      "provider_id": "example-provider",
+      "region": "example-region",
+      "instance_type": "accelerator-288gb-x8",
+      "accelerator_id": "example-accelerator-288gb",
+      "vendor": "nvidia",
+      "devices_per_instance": 8,
+      "memory_bytes_per_device": 309237645312,
+      "memory_utilization_limit": 0.96,
+      "price_per_instance_hour": null,
+      "price_currency": null,
+      "max_instances": null,
+      "interconnect": "high-bandwidth-device-fabric",
+      "source": "inventory://sanitized-long-context-shape",
+      "collected_at": null
+    }
+  ]
+}

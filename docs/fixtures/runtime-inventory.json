@@ -1,0 +1,33 @@
+{
+  "schema_version": "runtime-inventory-1.0",
+  "items": [
+    {
+      "runtime_id": "vllm-tp1",
+      "runtime": {
+        "engine": "vllm",
+        "version": "0.8.5",
+        "tensor_parallel_size": 1,
+        "kv_cache_dtype": "bf16",
+        "kv_heads_per_device": null,
+        "weight_bytes_per_device_override": null,
+        "runtime_overhead_bytes_per_device": 1073741824,
+        "activation_reserve_bytes_per_device": 2147483648,
+        "max_num_seqs": 128,
+        "block_size_tokens": 16,
+        "supported_vendors": ["nvidia", "amd"],
+        "notes": []
+      },
+      "source": "runtime://sanitized-vllm-tp1",
+      "expert_parallel_size": 1,
+      "routing": {
+        "flow_control_token_limit": null,
+        "max_concurrent_sequences": null,
+        "kv_block_size_tokens": 16,
+        "output_ratio": null,
+        "max_estimated_output_tokens": null,
+        "precise_prefix_routing": false
+      },
+      "supported_accelerator_ids": ["accelerator-80gb", "accelerator-192gb"]
+    }
+  ]
+}

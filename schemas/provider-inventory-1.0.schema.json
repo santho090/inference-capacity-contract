@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santho090.github.io/inference-capacity-contract/schemas/provider-inventory-1.0.schema.json",
+  "title": "Provider Inventory 1.0",
+  "type": "object",
+  "required": ["schema_version", "items"],
+  "properties": {
+    "schema_version": {"const": "provider-inventory-1.0"},
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/provider_instance"}
+    }
+  },
+  "$defs": {
+    "provider_instance": {
+      "type": "object",
+      "required": [
+        "provider_id", "region", "instance_type", "accelerator_id", "vendor",
+        "devices_per_instance", "memory_bytes_per_device", "memory_utilization_limit",
+        "price_per_instance_hour", "price_currency", "max_instances", "interconnect",
+        "source", "collected_at"
+      ],
+      "properties": {
+        "provider_id": {"type": "string", "minLength": 1},
+        "region": {"type": "string", "minLength": 1},
+        "instance_type": {"type": "string", "minLength": 1},
+        "accelerator_id": {"type": "string", "minLength": 1},
+        "vendor": {"type": "string", "minLength": 1},
+        "devices_per_instance": {"type": "integer", "minimum": 1},
+        "memory_bytes_per_device": {"type": "integer", "minimum": 1},
+        "memory_utilization_limit": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "price_per_instance_hour": {"type": ["number", "null"], "minimum": 0},
+        "price_currency": {"type": ["string", "null"], "pattern": "^[A-Z]{3}$"},
+        "max_instances": {"type": ["integer", "null"], "minimum": 0},
+        "interconnect": {"type": ["string", "null"], "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "collected_at": {"type": ["string", "null"], "format": "date-time"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"price_per_instance_hour": {"type": "number"}}},
+          "then": {
+            "properties": {
+              "price_currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+              "collected_at": {"type": "string", "format": "date-time"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"max_instances": {"type": "integer"}}},
+          "then": {"properties": {"collected_at": {"type": "string", "format": "date-time"}}}
+        }
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

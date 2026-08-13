@@ -47,6 +47,11 @@ to pinned manifests that can be replayed offline.
 
 ## Phase 2: single-model analytical solver
 
+Building blocks now available: caller-supplied provider and runtime
+inventories, shared `explore` and `plan` evaluation, whole-instance resource
+claims, price and availability snapshots, candidate rejection reasons, and
+flow-aware recipe audits.
+
 - accept normalized user-supplied provider inventories;
 - add a versioned vLLM runtime adapter;
 - expose `explore` and `plan` over the same candidate evaluator;

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 - Makes serving-recipe group sizing honor the block-aligned llm-d flow-control
   budget at the requested context.
@@ -9,6 +9,11 @@
   sequence.
 - Adds the `recipe-audit-2.0` schema. The historical 1.0 schema remains for
   reference.
+- Adds caller-supplied provider, runtime, and measurement inventories.
+- Adds `explore` and `plan` APIs plus `icc explore` and `icc plan-providers`.
+- Reports whole-instance allocation, serving and idle devices, cost currency,
+  point-in-time availability, and candidate-specific rejection reasons.
+- Refuses lowest-cost ranking when supplied prices use different currencies.
 
 ## 0.4.0
 

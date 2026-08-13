@@ -151,6 +151,42 @@ This schema does not represent pipeline parallelism or separate prefill and
 decode worker pools. Adapters must reject those topologies rather than map them
 to TP/DP/EP defaults.
 
+## Provider planning
+
+`provider-inventory-1.0` records caller-supplied instance shapes. Price and
+availability require a timestamp. Prices also require a three-letter currency
+code. The library does not fetch catalogs, convert currencies, or treat a
+reported maximum as reserved capacity.
+
+`runtime-inventory-1.0` records explicit runtime options, including engine and
+version, TP/EP layout, memory reserves, KV layout, llm-d limits, and optionally
+the accelerator identities known to support the option. An empty accelerator
+list is an unverified caller assumption, which appears as a warning rather
+than a compatibility claim.
+
+`explore` and `plan` use the same candidate evaluator. Both run the capacity
+calculator and the serving-recipe audit. Exploration reports per-replica and
+per-instance sequence capacity at one context. Planning applies a load,
+instance packing, price, and availability to each homogeneous candidate. One
+TP replica must fit within one provider instance; the current solver does not
+build a tensor-parallel replica across instances.
+
+A resource claim distinguishes:
+
+- serving replicas and devices used by those replicas;
+- whole provider instances and all devices allocated with them; and
+- allocated devices left idle by TP packing or the final partially filled
+  instance.
+
+RPS, prefill TPS, decode TPS, TTFT, and TPOT still require an exact matching
+measurement. `measurement-inventory-1.0` indexes measured group profiles by
+recipe fingerprint, context, and request shape. A measurement for one provider
+or runtime option is never copied to another candidate.
+
+Lowest-cost ranking is deterministic only within one currency. Mixed-currency
+inventories are rejected unless the caller chooses a non-cost objective or
+normalizes the prices before calling the library.
+
 ## Partial recipe import
 
 `recipe-draft-1.0` is a partial normalization boundary for existing llm-d
@@ -213,3 +249,7 @@ validated by the dependency-free Python parsers.
   topology/routing checks before model memory is known.
 - `model-manifest-1.0` and `vllm-initialization-profile-1.0`: pinned static
   metadata and measured runtime memory facts.
+- `provider-inventory-1.0`, `runtime-inventory-1.0`, and
+  `measurement-inventory-1.0`: caller-supplied planning inputs.
+- `capacity-exploration-1.0` and `capacity-plan-1.0`: ranked single-model
+  candidate results and resource claims.

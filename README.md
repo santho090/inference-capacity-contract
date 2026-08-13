@@ -22,7 +22,10 @@ The result is a versioned JSON contract with:
 - SafeTensors header inspection without downloading tensor payloads;
 - vLLM initialization and benchmark evidence import; and
 - a direct answer for whether a configured recipe can handle the requested
-  context and load.
+  context and load;
+- provider-instance exploration for one model and context; and
+- ranked, homogeneous capacity plans with instance packing, allocated and idle
+  devices, price, availability, and explicit rejection reasons.
 
 The library does not start vLLM or SGLang, discover GPUs, query provider
 catalogs, mutate a cluster, or claim throughput and latency from model
@@ -64,6 +67,8 @@ installed separately with `python -m pip install -e '.[dev]'`.
 |---|---|---|
 | Does this model fit this hardware/runtime? | `capacity_for` | `icc plan` |
 | Which supplied hardware candidates fit? | `what_fits` | `icc fit` |
+| What can this model run on at a given context? | `explore` | `icc explore` |
+| Which provider plan satisfies this load? | `plan` | `icc plan-providers` |
 | How many replicas does a measured workload need? | `recommend_scale` | `icc scale` |
 | Is this complete TP/DP/EP and llm-d recipe good for this load? | `audit_recipe` | `icc audit` |
 | What can be checked before all recipe facts are known? | `audit_recipe_draft` | `icc import-llmd`, `icc audit-draft` |
@@ -146,6 +151,40 @@ icc export \
 
 `fit` checks every hardware and runtime pair. If a pair is unsupported, the
 result includes `unsupported_reason` and the search continues.
+
+## Explore providers and plan capacity
+
+Provider discovery is deliberately outside the library. Supply a normalized
+inventory with the instance shape, accelerator identity, price currency,
+availability, source, and collection time. Supply runtime options separately
+so support claims remain explicit and versioned.
+
+```bash
+icc explore \
+  --model docs/fixtures/model-7b.json \
+  --providers docs/fixtures/provider-inventory.json \
+  --runtimes docs/fixtures/runtime-inventory.json \
+  --context-tokens 8192
+
+icc plan-providers \
+  --model docs/fixtures/model-7b.json \
+  --providers docs/fixtures/provider-inventory.json \
+  --runtimes docs/fixtures/runtime-inventory.json \
+  --load docs/fixtures/load-provider-plan.json \
+  --objective lowest-cost
+```
+
+`explore` compares memory, context, runtime, and routing capacity. It does not
+predict RPS, TPS, TTFT, or TPOT. `plan-providers` sizes concurrency directly;
+traffic or latency requirements stay `incomplete` until a matching measured
+profile is supplied. Each candidate reports serving devices separately from
+whole-instance allocated devices, so packing waste is visible. Lowest-cost
+ranking rejects mixed currencies rather than pretending that their numeric
+prices are comparable.
+
+The first planner handles one model and homogeneous candidates. It does not
+split replicas across providers, stretch one TP replica across instances, or
+reserve infrastructure.
 
 ## Import an existing llm-d recipe
 
@@ -401,7 +440,10 @@ capacity contract:
 
 - `serving-recipe-1.0`;
 - `load-requirement-1.0`; and
-- `recipe-audit-1.0` (historical) and `recipe-audit-2.0` (current).
+- `recipe-audit-1.0` (historical).
+
+Version `0.5.0` adds the flow-aware `recipe-audit-2.0`, provider and runtime
+inventories, capacity exploration, and provider plans.
 
 These schemas describe normalized output documents produced by `to_dict()`.
 CLI input files may omit nullable/defaulted fields; the dependency-free Python

@@ -1,0 +1,53 @@
+{
+  "schema_version": "provider-inventory-1.0",
+  "items": [
+    {
+      "provider_id": "provider-a",
+      "region": "region-1",
+      "instance_type": "accelerator-80gb-x1",
+      "accelerator_id": "accelerator-80gb",
+      "vendor": "nvidia",
+      "devices_per_instance": 1,
+      "memory_bytes_per_device": 85899345920,
+      "memory_utilization_limit": 0.9,
+      "price_per_instance_hour": 4.0,
+      "price_currency": "USD",
+      "max_instances": 10,
+      "interconnect": null,
+      "source": "inventory://sanitized-provider-a",
+      "collected_at": "2026-08-12T12:00:00Z"
+    },
+    {
+      "provider_id": "provider-b",
+      "region": "region-2",
+      "instance_type": "accelerator-80gb-x8",
+      "accelerator_id": "accelerator-80gb",
+      "vendor": "nvidia",
+      "devices_per_instance": 8,
+      "memory_bytes_per_device": 85899345920,
+      "memory_utilization_limit": 0.9,
+      "price_per_instance_hour": 28.0,
+      "price_currency": "USD",
+      "max_instances": 2,
+      "interconnect": "high-bandwidth-device-fabric",
+      "source": "inventory://sanitized-provider-b",
+      "collected_at": "2026-08-12T12:00:00Z"
+    },
+    {
+      "provider_id": "provider-c",
+      "region": "region-3",
+      "instance_type": "accelerator-192gb-x8",
+      "accelerator_id": "accelerator-192gb",
+      "vendor": "amd",
+      "devices_per_instance": 8,
+      "memory_bytes_per_device": 206158430208,
+      "memory_utilization_limit": 0.9,
+      "price_per_instance_hour": null,
+      "price_currency": null,
+      "max_instances": null,
+      "interconnect": "high-bandwidth-device-fabric",
+      "source": "inventory://sanitized-provider-c",
+      "collected_at": null
+    }
+  ]
+}

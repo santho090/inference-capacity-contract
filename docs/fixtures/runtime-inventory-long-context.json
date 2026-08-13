@@ -1,0 +1,33 @@
+{
+  "schema_version": "runtime-inventory-1.0",
+  "items": [
+    {
+      "runtime_id": "vllm-tp8-ep8-fp8-kv",
+      "runtime": {
+        "engine": "vllm",
+        "version": "example-pinned-image",
+        "tensor_parallel_size": 8,
+        "kv_cache_dtype": "fp8",
+        "kv_heads_per_device": null,
+        "weight_bytes_per_device_override": 64424509440,
+        "runtime_overhead_bytes_per_device": 2147483648,
+        "activation_reserve_bytes_per_device": 4294967296,
+        "max_num_seqs": 24,
+        "block_size_tokens": 1536,
+        "supported_vendors": ["nvidia"],
+        "notes": []
+      },
+      "source": "runtime://sanitized-long-context-shape",
+      "expert_parallel_size": 8,
+      "routing": {
+        "flow_control_token_limit": 2104030,
+        "max_concurrent_sequences": null,
+        "kv_block_size_tokens": 1536,
+        "output_ratio": 0.2,
+        "max_estimated_output_tokens": 500,
+        "precise_prefix_routing": true
+      },
+      "supported_accelerator_ids": ["example-accelerator-288gb"]
+    }
+  ]
+}

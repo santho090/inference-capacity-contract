@@ -76,3 +76,15 @@ jobs:
             --recipe /tmp/icc-materialized-recipe.json \
             --load docs/fixtures/load-context-concurrency.json \
             --output /tmp/icc-materialized-audit.json
+          /tmp/icc-venv/bin/icc explore \
+            --model docs/fixtures/model-7b.json \
+            --providers docs/fixtures/provider-inventory.json \
+            --runtimes docs/fixtures/runtime-inventory.json \
+            --context-tokens 8192 \
+            --output /tmp/icc-exploration.json
+          /tmp/icc-venv/bin/icc plan-providers \
+            --model docs/fixtures/model-7b.json \
+            --providers docs/fixtures/provider-inventory.json \
+            --runtimes docs/fixtures/runtime-inventory.json \
+            --load docs/fixtures/load-provider-plan.json \
+            --output /tmp/icc-provider-plan.json

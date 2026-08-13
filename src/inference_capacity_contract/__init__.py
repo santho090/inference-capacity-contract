@@ -21,6 +21,13 @@ from .importers import (
     resolve_huggingface_manifest,
     tensor_element_count_from_safetensors_headers,
 )
+from .inventory import (
+    MeasurementInventory,
+    ProviderInstanceSpec,
+    ProviderInventory,
+    RuntimeInventory,
+    RuntimeOption,
+)
 from .models import (
     CapacityContract,
     ConcurrencyPoint,
@@ -33,6 +40,16 @@ from .models import (
     RuntimeVariant,
     ValidationLevel,
     WorkloadProfile,
+)
+from .planner import (
+    CandidateStatus,
+    CapacityPlan,
+    ExplorationResult,
+    PlanningObjective,
+    ResourceClaim,
+    SolverCandidate,
+    explore,
+    plan,
 )
 from .recipe import (
     RECIPE_VARIANT_FINGERPRINT_VERSION,
@@ -89,4 +106,17 @@ __all__ = [
     "parse_safetensors_header",
     "resolve_huggingface_manifest",
     "tensor_element_count_from_safetensors_headers",
+    "ProviderInstanceSpec",
+    "ProviderInventory",
+    "RuntimeOption",
+    "RuntimeInventory",
+    "MeasurementInventory",
+    "CandidateStatus",
+    "PlanningObjective",
+    "ResourceClaim",
+    "SolverCandidate",
+    "ExplorationResult",
+    "CapacityPlan",
+    "explore",
+    "plan",
 ]

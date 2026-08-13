@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-plan-1.0.schema.json",
+  "title": "Capacity Plan 1.0",
+  "type": "object",
+  "required": ["schema_version", "model", "load", "objective", "candidates", "assumptions"],
+  "properties": {
+    "schema_version": {"const": "capacity-plan-1.0"},
+    "model": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/model"},
+    "load": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/load-requirement-1.0.schema.json"},
+    "objective": {"enum": ["lowest-cost", "fewest-allocated-devices"]},
+    "candidates": {"type": "array", "minItems": 1, "items": {"$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-exploration-1.0.schema.json#/$defs/candidate"}},
+    "assumptions": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

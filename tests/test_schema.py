@@ -15,16 +15,22 @@ from inference_capacity_contract import (
     HardwareSpec,
     LoadRequirement,
     MeasuredGroupProfile,
+    MeasurementInventory,
     ModelSpec,
+    PlanningObjective,
+    ProviderInventory,
+    RuntimeInventory,
     RuntimeVariant,
     ServingRecipe,
     WorkloadProfile,
     audit_recipe,
     audit_recipe_draft,
     capacity_for,
+    explore,
     import_huggingface_manifest,
     import_llmd_values,
     import_vllm_initialization,
+    plan,
     recommend_scale,
 )
 
@@ -50,6 +56,11 @@ class SchemaTests(unittest.TestCase):
         self.structural_audit_schema = _read_schema("structural-recipe-audit-1.0.schema.json")
         self.manifest_schema = _read_schema("model-manifest-1.0.schema.json")
         self.initialization_schema = _read_schema("vllm-initialization-profile-1.0.schema.json")
+        self.provider_inventory_schema = _read_schema("provider-inventory-1.0.schema.json")
+        self.runtime_inventory_schema = _read_schema("runtime-inventory-1.0.schema.json")
+        self.measurement_inventory_schema = _read_schema("measurement-inventory-1.0.schema.json")
+        self.exploration_schema = _read_schema("capacity-exploration-1.0.schema.json")
+        self.plan_schema = _read_schema("capacity-plan-1.0.schema.json")
         Draft202012Validator.check_schema(self.capacity_schema)
         Draft202012Validator.check_schema(self.scaling_schema)
         Draft202012Validator.check_schema(self.recipe_schema)
@@ -59,6 +70,55 @@ class SchemaTests(unittest.TestCase):
         Draft202012Validator.check_schema(self.structural_audit_schema)
         Draft202012Validator.check_schema(self.manifest_schema)
         Draft202012Validator.check_schema(self.initialization_schema)
+        Draft202012Validator.check_schema(self.provider_inventory_schema)
+        Draft202012Validator.check_schema(self.runtime_inventory_schema)
+        Draft202012Validator.check_schema(self.measurement_inventory_schema)
+        Draft202012Validator.check_schema(self.exploration_schema)
+        Draft202012Validator.check_schema(self.plan_schema)
+
+    def test_provider_inventory_exploration_and_plan_documents_validate(self) -> None:
+        model = ModelSpec.from_dict(
+            json.loads((ROOT / "docs" / "fixtures" / "model-7b.json").read_text(encoding="utf-8"))
+        )
+        providers = ProviderInventory.from_dict(
+            json.loads((ROOT / "docs" / "fixtures" / "provider-inventory.json").read_text(encoding="utf-8"))
+        )
+        runtimes = RuntimeInventory.from_dict(
+            json.loads((ROOT / "docs" / "fixtures" / "runtime-inventory.json").read_text(encoding="utf-8"))
+        )
+        load = LoadRequirement.from_dict(
+            json.loads((ROOT / "docs" / "fixtures" / "load-provider-plan.json").read_text(encoding="utf-8"))
+        )
+        exploration = explore(model, providers, runtimes, context_tokens=load.context_tokens).to_dict()
+        capacity_plan = plan(
+            model,
+            providers,
+            runtimes,
+            load,
+            objective=PlanningObjective.LOWEST_COST,
+        ).to_dict()
+
+        registry = Registry()
+        for schema in (
+            self.capacity_schema,
+            self.recipe_schema,
+            self.load_schema,
+            self.audit_schema,
+            self.provider_inventory_schema,
+            self.runtime_inventory_schema,
+            self.measurement_inventory_schema,
+            self.exploration_schema,
+            self.plan_schema,
+        ):
+            registry = registry.with_resource(str(schema["$id"]), Resource.from_contents(schema))
+
+        Draft202012Validator(self.provider_inventory_schema, registry=registry).validate(providers.to_dict())
+        Draft202012Validator(self.runtime_inventory_schema, registry=registry).validate(runtimes.to_dict())
+        Draft202012Validator(self.measurement_inventory_schema, registry=registry).validate(
+            MeasurementInventory("measurement-inventory-1.0", ()).to_dict()
+        )
+        Draft202012Validator(self.exploration_schema, registry=registry).validate(exploration)
+        Draft202012Validator(self.plan_schema, registry=registry).validate(capacity_plan)
 
     def test_draft_manifest_and_initialization_documents_validate(self) -> None:
         values = json.loads(

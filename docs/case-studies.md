@@ -22,6 +22,22 @@ sequence; flow control permits two sequences at the configured 1M-token limit.
 This is a routing-budget result, not proof of a memory overrun: runtime KV
 capacity still requires an initialization measurement.
 
+The complete sanitized inputs can also be sent through the provider planner:
+
+```bash
+icc plan-providers \
+  --model docs/fixtures/model-long-context-moe.json \
+  --providers docs/fixtures/provider-inventory-long-context.json \
+  --runtimes docs/fixtures/runtime-inventory-long-context.json \
+  --load docs/fixtures/load-context-concurrency.json
+```
+
+For a peak of 30 full-context sequences at 80% target utilization, memory
+allows 52 sequences per group and the runtime allows 24, but llm-d flow control
+allows only two. The binding limit therefore requires 19 TP8 groups, or 152
+serving devices. Price and availability remain unknown because the fixture does
+not invent them.
+
 ## DP4 layout on an eight-device host
 
 `llmd-values-dp4-on-x8.json` describes TP1/DP4/EP on an eight-device host. The

@@ -1,0 +1,14 @@
+{
+  "model_id": "example/long-context-moe",
+  "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "parameter_count": 240000000000,
+  "num_layers": 64,
+  "num_kv_heads": 8,
+  "head_dim": 128,
+  "weight_dtype": "bf16",
+  "max_model_len": 1048576,
+  "explicit_weight_bytes": null,
+  "attention_type": "mla",
+  "kv_bytes_per_token_per_device_override": 4096,
+  "architecture": "ExampleLongContextMoEForCausalLM"
+}

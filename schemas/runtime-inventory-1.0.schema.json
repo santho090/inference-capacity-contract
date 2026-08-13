@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santho090.github.io/inference-capacity-contract/schemas/runtime-inventory-1.0.schema.json",
+  "title": "Runtime Inventory 1.0",
+  "type": "object",
+  "required": ["schema_version", "items"],
+  "properties": {
+    "schema_version": {"const": "runtime-inventory-1.0"},
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/runtime_option"}
+    }
+  },
+  "$defs": {
+    "runtime_option": {
+      "type": "object",
+      "required": [
+        "runtime_id", "runtime", "source", "expert_parallel_size", "routing",
+        "supported_accelerator_ids"
+      ],
+      "properties": {
+        "runtime_id": {"type": "string", "minLength": 1},
+        "runtime": {
+          "$ref": "https://santho090.github.io/inference-capacity-contract/schemas/capacity-contract-2.0.schema.json#/$defs/runtime"
+        },
+        "source": {"type": "string", "minLength": 1},
+        "expert_parallel_size": {"type": "integer", "minimum": 1},
+        "routing": {"$ref": "#/$defs/routing"},
+        "supported_accelerator_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    },
+    "routing": {
+      "type": "object",
+      "required": [
+        "flow_control_token_limit", "max_concurrent_sequences", "kv_block_size_tokens",
+        "output_ratio", "max_estimated_output_tokens", "precise_prefix_routing"
+      ],
+      "properties": {
+        "flow_control_token_limit": {"type": ["integer", "null"], "minimum": 1},
+        "max_concurrent_sequences": {"type": ["integer", "null"], "minimum": 1},
+        "kv_block_size_tokens": {"type": ["integer", "null"], "minimum": 1},
+        "output_ratio": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "max_estimated_output_tokens": {"type": ["integer", "null"], "minimum": 1},
+        "precise_prefix_routing": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

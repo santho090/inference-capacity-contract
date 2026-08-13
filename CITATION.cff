@@ -2,7 +2,7 @@ cff-version: 1.2.0
 title: Inference Capacity Contract
 message: Cite this repository when using its capacity-contract format or calculators.
 type: software
-version: 0.2.0
+version: 0.5.0
 authors:
   - family-names: Vaithiyanathan
     given-names: Santhosh

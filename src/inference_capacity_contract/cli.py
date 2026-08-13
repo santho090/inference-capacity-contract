@@ -19,7 +19,10 @@ from .importers import (
     import_vllm_initialization,
     materialize_recipe_draft,
 )
+from .inventory import MeasurementInventory, ProviderInventory, RuntimeInventory
 from .models import CapacityContract, HardwareInventory, HardwareSpec, ModelSpec, RuntimeVariant, WorkloadProfile
+from .planner import PlanningObjective, explore
+from .planner import plan as plan_providers
 from .recipe import LoadRequirement, ServingRecipe, audit_recipe
 from .scaling import recommend_scale
 
@@ -123,6 +126,32 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--latency-percentile", required=True, type=float)
     benchmark.add_argument("--source", required=True)
     benchmark.add_argument("--output")
+
+    explore_parser = sub.add_parser(
+        "explore",
+        help="compare one model across provider instances and runtime options",
+    )
+    explore_parser.add_argument("--model", required=True)
+    explore_parser.add_argument("--providers", required=True)
+    explore_parser.add_argument("--runtimes", required=True)
+    explore_parser.add_argument("--context-tokens", required=True, type=int)
+    explore_parser.add_argument("--output")
+
+    provider_plan = sub.add_parser(
+        "plan-providers",
+        help="size one model and load across provider instances and runtime options",
+    )
+    provider_plan.add_argument("--model", required=True)
+    provider_plan.add_argument("--providers", required=True)
+    provider_plan.add_argument("--runtimes", required=True)
+    provider_plan.add_argument("--load", required=True)
+    provider_plan.add_argument("--measurements")
+    provider_plan.add_argument(
+        "--objective",
+        choices=tuple(item.value for item in PlanningObjective),
+        default=PlanningObjective.LOWEST_COST.value,
+    )
+    provider_plan.add_argument("--output")
     return parser
 
 
@@ -203,6 +232,26 @@ def main(argv: list[str] | None = None) -> int:
                 source=args.source,
             )
             _write(benchmark_profile.to_dict(), args.output)
+        elif args.command == "explore":
+            exploration = explore(
+                ModelSpec.from_dict(_read(args.model)),
+                ProviderInventory.from_dict(_read(args.providers)),
+                RuntimeInventory.from_dict(_read(args.runtimes)),
+                context_tokens=args.context_tokens,
+            )
+            _write(exploration.to_dict(), args.output)
+        elif args.command == "plan-providers":
+            capacity_plan = plan_providers(
+                ModelSpec.from_dict(_read(args.model)),
+                ProviderInventory.from_dict(_read(args.providers)),
+                RuntimeInventory.from_dict(_read(args.runtimes)),
+                LoadRequirement.from_dict(_read(args.load)),
+                objective=PlanningObjective(args.objective),
+                measurements=(
+                    None if args.measurements is None else MeasurementInventory.from_dict(_read(args.measurements))
+                ),
+            )
+            _write(capacity_plan.to_dict(), args.output)
         else:
             raise ValueError(f"unknown command {args.command!r}")
         return 0
